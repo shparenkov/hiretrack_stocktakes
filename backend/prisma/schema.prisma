@@ -1,0 +1,100 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Ticket {
+  id                    String   @id @default(cuid())
+  ticketNumber          String   @unique
+  status                String
+  priority              String
+  equipmentName         String
+  serialNumber          String
+  barcodeRaw            String?
+  barcodeType           String?
+  hiretrackItemRef      Int?
+  hiretrackEquipmentTypeId Int?
+  hiretrackEqlistId     Int?
+  hiretrackEqlistName   String?
+  hiretrackJobNo        Int?
+  hiretrackJobRef       String?
+  clientName            String
+  clientCompany         String?
+  clientPhone           String?
+  clientEmail           String?
+  faultDescription      String
+  engineerNotes         String?
+  assignedEngineerId    String?
+  assignedEngineerName  String?
+  receivedAt            DateTime
+  diagnosedAt           DateTime?
+  estimatedReadyAt      DateTime?
+  completedAt           DateTime?
+  handedOverAt          DateTime?
+  bitrixItemId          String?
+  hiretrackTicketId     String?
+  syncBitrixState       String
+  syncHiretrackState    String
+  syncBitrixError       String?
+  syncHiretrackError    String?
+  syncBitrixUpdatedAt   DateTime?
+  syncHiretrackUpdatedAt DateTime?
+  createdBy             String
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  activityLogs          TicketActivityLog[]
+
+  @@index([status])
+  @@index([priority])
+  @@index([assignedEngineerId])
+  @@index([serialNumber])
+  @@index([receivedAt])
+  @@index([updatedAt])
+}
+
+model TicketActivityLog {
+  id          String   @id @default(cuid())
+  ticketId    String
+  type        String
+  message     String
+  actor       String?
+  payloadJson String?
+  createdAt   DateTime @default(now())
+
+  ticket      Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId, createdAt])
+}
+
+model Engineer {
+  id           String   @id @default(cuid())
+  name         String
+  active       Boolean  @default(true)
+  bitrixUserId String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([active])
+  @@index([name])
+}
+
+model TicketSyncJob {
+  id         String   @id @default(cuid())
+  ticketId   String
+  target     String
+  action     String
+  status     String
+  attempts   Int      @default(0)
+  payloadJson String
+  lastError  String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([ticketId])
+  @@index([target, status])
+}

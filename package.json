@@ -1,0 +1,29 @@
+{
+  "name": "hiretrack-service-tickets",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "tsx backend/src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/backend/src/index.js",
+    "frontend:dev": "npm --prefix frontend run dev",
+    "frontend:build": "npm --prefix frontend run build",
+    "prisma:generate": "prisma generate --schema backend/prisma/schema.prisma",
+    "prisma:migrate": "prisma migrate dev --schema backend/prisma/schema.prisma",
+    "prisma:studio": "prisma studio --schema backend/prisma/schema.prisma"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.8.0",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "zod": "^3.24.4"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.1",
+    "@types/node": "^22.15.30",
+    "prisma": "^6.8.0",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}
