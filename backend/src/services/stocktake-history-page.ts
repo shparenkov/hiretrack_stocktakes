@@ -444,6 +444,23 @@ export function renderDenseStocktakeHistoryPage() {
         const base = latest || previous;
         const entry = { key: key, latest: latest, previous: previous, base: base, latestSeen: !!(latest && latest.seenDate), previousSeen: !!(previous && previous.seenDate) };
         entry.status = classify(entry);
+        const cachedAssignment = assignmentCache.get(key);
+        if (cachedAssignment) {
+          entry.assignmentLoaded = true;
+          entry.currentAssignment = cachedAssignment.currentAssignment;
+          entry.eqlists = cachedAssignment.eqlists;
+        } else if (base && base.currentEqlistId != null) {
+          const currentAssignment = Number(base.currentEqlistId) > 1 ? {
+            eqlistId: Number(base.currentEqlistId), eqlistName: base.currentEqlistName || null,
+            jobNo: base.currentJobNo || null, jobRef: base.currentJobRef || null, clientName: base.currentClientName || null,
+            lastSeenAt: null, operationType: 0, isCurrent: true
+          } : null;
+          const seeded = { eqlists: currentAssignment ? [currentAssignment] : [], currentAssignment: currentAssignment, historyLoaded: false };
+          assignmentCache.set(key, seeded);
+          entry.assignmentLoaded = true;
+          entry.currentAssignment = currentAssignment;
+          entry.eqlists = seeded.eqlists;
+        }
         return entry;
       });
     }
@@ -625,7 +642,7 @@ export function renderDenseStocktakeHistoryPage() {
         entry.assignmentLoaded = true;
         entry.currentAssignment = cached.currentAssignment;
         entry.eqlists = cached.eqlists;
-        return cached.eqlists;
+        if (cached.historyLoaded !== false) return cached.eqlists;
       }
       if (entry.assignmentPromise) return entry.assignmentPromise;
 
@@ -636,7 +653,8 @@ export function renderDenseStocktakeHistoryPage() {
         const eqlists = payload.items || [];
         const result = {
           eqlists: eqlists,
-          currentAssignment: eqlists.find(function(row) { return row.isCurrent; }) || null
+          currentAssignment: eqlists.find(function(row) { return row.isCurrent; }) || null,
+          historyLoaded: true
         };
         assignmentCache.set(entry.key, result);
         entry.assignmentLoaded = true;

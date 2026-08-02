@@ -59,6 +59,11 @@ export interface HiretrackStocktakeHistoryRecord {
   barcode: string | null;
   serialNumber: string | null;
   commissionStatus: number | null;
+  currentEqlistId: number | null;
+  currentEqlistName: string | null;
+  currentJobNo: number | null;
+  currentJobRef: string | null;
+  currentClientName: string | null;
   currentItemState: 'active' | 'inactive' | 'unknown';
   seenDate: string | null;
   processedDate: string | null;
