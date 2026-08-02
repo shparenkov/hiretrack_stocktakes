@@ -21,3 +21,28 @@ Next implementation targets:
 2. add activity log persistence
 3. add barcode scanner UI
 4. add Bitrix adapter
+
+## Windows production deployment
+
+Production runs from the `master` branch as the `HireTrackStocktakes` Windows
+service. The service is isolated from HireTrack NX under
+`C:\Services\hiretrack_stocktakes` and listens on port `3001` by default.
+
+Run PowerShell as Administrator on the server:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+Invoke-WebRequest -UseBasicParsing `
+  https://raw.githubusercontent.com/shparenkov/hiretrack_stocktakes/master/deploy/windows/install-production.ps1 `
+  -OutFile $env:TEMP\install-production.ps1
+& $env:TEMP\install-production.ps1
+```
+
+The private HireTrack API configuration must be stored outside the repository
+at `C:\Services\hiretrack.config.json`.
+
+To deploy a later `master` update:
+
+```powershell
+& C:\Services\hiretrack_stocktakes\deploy\windows\update-production.ps1
+```
