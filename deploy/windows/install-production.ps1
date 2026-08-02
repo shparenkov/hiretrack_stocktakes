@@ -17,6 +17,7 @@ $appDirectory = Join-Path $InstallRoot 'hiretrack_stocktakes'
 $wrapperPath = Join-Path $appDirectory "$serviceId.exe"
 $wrapperConfigPath = Join-Path $appDirectory "$serviceId.xml"
 $healthUrl = "http://127.0.0.1:$Port/health"
+$firewallRuleName = 'HireTrack Stocktakes (Tailscale)'
 
 function Write-Step([string]$Message) {
   Write-Host "`n==> $Message" -ForegroundColor Cyan
@@ -147,6 +148,19 @@ Install-WinSw
 $nodePath = (Get-Command node -ErrorAction Stop).Source
 Write-ServiceConfig -NodePath $nodePath
 New-Item -ItemType Directory -Path (Join-Path $appDirectory 'logs') -Force | Out-Null
+
+Write-Step 'Allowing the application port from Tailscale only'
+$firewallRule = Get-NetFirewallRule -DisplayName $firewallRuleName -ErrorAction SilentlyContinue
+if (-not $firewallRule) {
+  New-NetFirewallRule `
+    -DisplayName $firewallRuleName `
+    -Direction Inbound `
+    -Action Allow `
+    -Protocol TCP `
+    -LocalPort $Port `
+    -RemoteAddress '100.64.0.0/10' `
+    -Profile Any | Out-Null
+}
 
 Write-Step 'Installing and starting Windows service'
 $existingService = Get-Service -Name $serviceId -ErrorAction SilentlyContinue
