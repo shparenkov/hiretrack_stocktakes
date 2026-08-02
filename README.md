@@ -41,6 +41,12 @@ Invoke-WebRequest -UseBasicParsing `
 The private HireTrack API configuration must be stored outside the repository
 at `C:\Services\hiretrack.config.json`.
 
+The stock-check UI and API require a password. Store it as a single line in
+`C:\Services\hiretrack-access-password.txt`; the file is read through the
+`STOCKTAKE_ACCESS_PASSWORD_FILE` service environment variable. Restart the
+service after changing the password. Existing browser sessions are invalidated
+automatically.
+
 To deploy a later `master` update:
 
 ```powershell

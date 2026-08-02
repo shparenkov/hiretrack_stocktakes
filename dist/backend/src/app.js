@@ -9,13 +9,16 @@ const express_1 = __importDefault(require("express"));
 const fs_1 = __importDefault(require("fs"));
 const tickets_1 = require("./routes/tickets");
 const bitrix_ticket_app_1 = require("./services/bitrix-ticket-app");
+const password_auth_1 = require("./services/password-auth");
 function createApp() {
     const app = (0, express_1.default)();
+    app.set('trust proxy', 'loopback');
     const frontendDistPath = (0, bitrix_ticket_app_1.resolveTicketsFrontendDistPath)();
     const frontendIndexPath = (0, bitrix_ticket_app_1.resolveTicketsFrontendIndexPath)();
     const hasFrontendBuild = fs_1.default.existsSync(frontendIndexPath);
     app.use((0, cors_1.default)());
     app.use(express_1.default.json({ limit: '2mb' }));
+    app.use(express_1.default.urlencoded({ extended: false, limit: '16kb' }));
     app.get('/health', (_req, res) => {
         res.json({
             ok: true,
@@ -24,6 +27,7 @@ function createApp() {
             timestamp: new Date().toISOString(),
         });
     });
+    (0, password_auth_1.installPasswordAuth)(app);
     app.use('/tickets', tickets_1.ticketsRouter);
     app.use('/api/tickets', tickets_1.ticketsRouter);
     app.all(['/bitrix/tickets/app', '/bitrix/tickets/install'], (_req, res) => {

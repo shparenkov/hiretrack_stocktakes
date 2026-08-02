@@ -92,6 +92,7 @@ function Write-ServiceConfig([string]$NodePath) {
   <env name="PORT" value="$Port" />
   <env name="HOST" value="0.0.0.0" />
   <env name="TICKETS_STORE_MODE" value="memory" />
+  <env name="STOCKTAKE_ACCESS_PASSWORD_FILE" value="C:\Services\hiretrack-access-password.txt" />
   <logpath>%BASE%\logs</logpath>
   <log mode="roll-by-size">
     <sizeThreshold>10240</sizeThreshold>
