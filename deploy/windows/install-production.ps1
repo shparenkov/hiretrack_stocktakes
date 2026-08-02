@@ -147,6 +147,9 @@ try {
   git diff --ignore-space-at-eol --exit-code -- dist
   if ($LASTEXITCODE -ne 0) { throw 'Generated dist does not match the committed build.' }
   git restore --worktree -- dist package-lock.json
+  git add -- dist
+  git diff --cached --exit-code
+  if ($LASTEXITCODE -ne 0) { throw 'Generated dist changed the Git index unexpectedly.' }
 } finally {
   Pop-Location
 }
