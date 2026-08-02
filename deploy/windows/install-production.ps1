@@ -144,6 +144,7 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'Prisma Client generation failed.' }
   & npm.cmd run build
   if ($LASTEXITCODE -ne 0) { throw 'npm run build failed.' }
+  git restore --worktree -- package-lock.json
 } finally {
   Pop-Location
 }
