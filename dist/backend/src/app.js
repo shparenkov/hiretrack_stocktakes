@@ -15,7 +15,7 @@ function createApp() {
     const frontendIndexPath = (0, bitrix_ticket_app_1.resolveTicketsFrontendIndexPath)();
     const hasFrontendBuild = fs_1.default.existsSync(frontendIndexPath);
     app.use((0, cors_1.default)());
-    app.use(express_1.default.json());
+    app.use(express_1.default.json({ limit: '2mb' }));
     app.get('/health', (_req, res) => {
         res.json({
             ok: true,

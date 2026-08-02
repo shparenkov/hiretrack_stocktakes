@@ -212,28 +212,13 @@ function renderDenseStocktakeHistoryPage() {
       .inventory-table { min-width: 900px; }
       .detail-pane { min-height: 650px; }
     }
-    @media print {
-      @page { size: A4 landscape; margin: 9mm; }
-      html, body { width: auto; height: auto; overflow: visible; background: #fff; font-size: 9pt; }
-      .app { display: none !important; }
-      .report-panel { position: static; display: block !important; }
-      .report-toolbar { padding: 0 0 6mm; color: #000; background: transparent; border-bottom: 1px solid #000; }
-      .report-toolbar h2 { font-size: 15pt; }
-      .report-actions { display: none; }
-      .report-summary { padding: 3mm 0; color: #000; background: transparent; }
-      .report-scroll { overflow: visible; }
-      .report-table { table-layout: fixed; }
-      .report-table th { position: static; color: #fff; background: #173f72 !important; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
-      .report-table tr { break-inside: avoid; }
-      .report-table tr.problem-repair td, .report-table tr.problem-missing td, .report-table tr.problem-inactive td { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
-    }
   </style>
 </head>
 <body>
   <main class="app">
     <header class="topbar">
       <h1>Stock Check <span class="sub">история и расхождения по инвентаризациям</span></h1>
-      <div class="top-actions"><span id="status" class="status">Загрузка...</span><button id="problemReportOpen" class="refresh" type="button" disabled>Проблемы / PDF</button><button id="refresh" class="refresh" type="button">Обновить</button></div>
+      <div class="top-actions"><span id="status" class="status">Загрузка...</span><button id="summaryPdf" class="refresh" type="button" disabled>Состояние / PDF</button><button id="problemReportOpen" class="refresh" type="button" disabled>Проблемы / PDF</button><button id="refresh" class="refresh" type="button">Обновить</button></div>
     </header>
     <section class="filters" aria-label="Фильтры">
       <div class="field category"><label for="category">MasterCat / Category</label><select id="category"></select></div>
@@ -286,7 +271,7 @@ function renderDenseStocktakeHistoryPage() {
   <section id="problemReport" class="report-panel" hidden>
     <header class="report-toolbar">
       <h2>Проблемные позиции Stock Check</h2>
-      <div class="report-actions"><button id="problemReportClose" class="refresh" type="button">Закрыть</button><button id="problemReportPrint" class="refresh" type="button" disabled>Печать / PDF</button></div>
+      <div class="report-actions"><button id="problemReportClose" class="refresh" type="button">Закрыть</button><button id="problemReportPrint" class="refresh" type="button" disabled>Скачать PDF</button></div>
     </header>
     <div id="problemReportSummary" class="report-summary"></div>
     <div class="report-scroll">
@@ -299,7 +284,7 @@ function renderDenseStocktakeHistoryPage() {
   </section>
   <script>
     const els = {
-      status: document.getElementById('status'), refresh: document.getElementById('refresh'),
+      status: document.getElementById('status'), refresh: document.getElementById('refresh'), summaryPdf: document.getElementById('summaryPdf'),
       category: document.getElementById('category'), latest: document.getElementById('latest'), previous: document.getElementById('previous'),
       search: document.getElementById('search'), hideZero: document.getElementById('hideZero'),
       inventoryRows: document.getElementById('inventoryRows'), inventoryEmpty: document.getElementById('inventoryEmpty'), inventoryMeta: document.getElementById('inventoryMeta'),
@@ -318,6 +303,7 @@ function renderDenseStocktakeHistoryPage() {
     let preloadToken = 0;
     let preloadProgress = { key: '', loaded: 0, total: 0, running: false };
     let reportToken = 0;
+    let currentProblemEntries = [];
     let currentEvents = [];
     const sortState = {
       inventory: { key: 'equipmentType', direction: 'asc' },
@@ -494,12 +480,15 @@ function renderDenseStocktakeHistoryPage() {
       if (els.hideZero.checked) groups = groups.filter(function(g) { return g.barcoded > 0; });
       return sortRows(groups, 'inventory', function(group, key) { return group[key]; });
     }
+    function summaryLevel(group) {
+      if (group.active === 0) return 'zero';
+      if (group.notSeen === 0) return 'ok';
+      if (group.notSeen <= 2) return 'minor';
+      if ((group.notSeen / Math.max(group.active, 1)) >= .1) return 'critical';
+      return 'low';
+    }
     function levelClass(group) {
-      if (group.active === 0) return 'level-zero';
-      if (group.notSeen === 0) return 'level-ok';
-      if (group.notSeen <= 2) return 'level-minor';
-      if ((group.notSeen / Math.max(group.active, 1)) >= .1) return 'level-critical';
-      return 'level-low';
+      return 'level-' + summaryLevel(group);
     }
     function renderInventory() {
       typeGroups = groupTypes(comparisonEntries);
@@ -516,6 +505,7 @@ function renderDenseStocktakeHistoryPage() {
       els.inventoryEmpty.hidden = typeGroups.length > 0;
       const totals = typeGroups.reduce(function(a,g) { a.types += 1; a.items += g.total; a.seen += g.latestSeen; a.unseen += g.notSeen; return a; }, {types:0, items:0, seen:0, unseen:0});
       els.inventoryMeta.textContent = totals.types + ' типов · ' + totals.items + ' единиц · найдено ' + totals.seen + ' · не найдено ' + totals.unseen;
+      els.summaryPdf.disabled = typeGroups.length === 0;
       updateSortHeaders('inventory');
       bindTypeRows();
       renderUnits();
@@ -579,6 +569,12 @@ function renderDenseStocktakeHistoryPage() {
       if (commissionStatus >= 3 || entry.status === 'sold' || entry.status === 'written_off') return 'problem-inactive';
       return 'problem-missing';
     }
+    function reportProblemKind(entry) {
+      const commissionStatus = Number(entry.base.commissionStatus);
+      if (commissionStatus === 2) return 'repair';
+      if (commissionStatus >= 3 || entry.status === 'sold' || entry.status === 'written_off') return 'inactive';
+      return 'missing';
+    }
     function renderProblemReport(entries, loaded, total) {
       els.reportRows.innerHTML = entries.map(function(entry) {
         const item = entry.base;
@@ -601,6 +597,7 @@ function renderDenseStocktakeHistoryPage() {
         const typeResult = String(a.base.equipmentType || '').localeCompare(String(b.base.equipmentType || ''), 'ru', { numeric: true, sensitivity: 'base' });
         return typeResult || String(a.base.barcode || a.base.itemRef || '').localeCompare(String(b.base.barcode || b.base.itemRef || ''), 'ru', { numeric: true, sensitivity: 'base' });
       });
+      currentProblemEntries = entries;
       els.report.hidden = false;
       els.reportPrint.disabled = true;
       const pending = entries.filter(function(entry) {
@@ -630,6 +627,121 @@ function renderDenseStocktakeHistoryPage() {
     function closeProblemReport() {
       reportToken += 1;
       els.report.hidden = true;
+    }
+    async function downloadProblemPdf() {
+      if (currentProblemEntries.length === 0) return;
+      const originalText = els.reportPrint.textContent;
+      els.reportPrint.disabled = true;
+      els.reportPrint.textContent = 'Формируется...';
+      try {
+        const sessions = sessionsFrom(rawItems);
+        const latestSession = sessions.find(function(session) { return session.stockTakeId === selectedId(els.latest); });
+        const previousSession = sessions.find(function(session) { return session.stockTakeId === selectedId(els.previous); });
+        const rows = currentProblemEntries.map(function(entry) {
+          const item = entry.base;
+          const inventory = inventoryStatus(entry);
+          const location = currentLocation(entry);
+          const last = lastObservation(entry);
+          return {
+            equipmentType: item.equipmentType || '—',
+            barcode: String(item.barcode || item.itemRef || '—'),
+            serialNumber: item.serialNumber || '—',
+            inventoryStatus: inventory.label,
+            currentStatus: location.label,
+            currentStatusNote: location.note || '',
+            lastObservation: last.date ? fmtDate(last.date) : last.label,
+            lastObservationSource: last.date ? last.label : '',
+            kind: reportProblemKind(entry)
+          };
+        });
+        const response = await fetch('/api/tickets/lookups/stocktake-problems.pdf', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            latestSession: sessionLabel(latestSession),
+            previousSession: previousSession ? sessionLabel(previousSession) : '',
+            generatedAt: new Date().toISOString(),
+            rows: rows
+          })
+        });
+        if (!response.ok) {
+          const payload = await response.json().catch(function() { return {}; });
+          throw new Error(payload.error || ('HTTP ' + response.status));
+        }
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'stockcheck-problems-' + new Date().toISOString().slice(0, 10) + '.pdf';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
+      } catch (error) {
+        window.alert('Не удалось сформировать PDF: ' + (error instanceof Error ? error.message : String(error)));
+      } finally {
+        els.reportPrint.textContent = originalText;
+        els.reportPrint.disabled = currentProblemEntries.length === 0;
+      }
+    }
+    async function downloadSummaryPdf() {
+      if (typeGroups.length === 0) return;
+      const originalText = els.summaryPdf.textContent;
+      els.summaryPdf.disabled = true;
+      els.summaryPdf.textContent = 'Формируется...';
+      try {
+        const sessions = sessionsFrom(rawItems);
+        const latestSession = sessions.find(function(session) { return session.stockTakeId === selectedId(els.latest); });
+        const previousSession = sessions.find(function(session) { return session.stockTakeId === selectedId(els.previous); });
+        const categoryOption = els.category.options[els.category.selectedIndex];
+        const rows = typeGroups.map(function(group) {
+          return {
+            equipmentType: group.equipmentType || 'Без описания',
+            equipmentTypeId: group.equipmentTypeId == null ? '' : String(group.equipmentTypeId),
+            total: group.total,
+            barcoded: group.barcoded,
+            active: group.active,
+            repair: group.repair,
+            previousSeen: group.previousSeen,
+            latestSeen: group.latestSeen,
+            notSeen: group.notSeen,
+            writtenOff: group.writtenOff,
+            sold: group.sold,
+            level: summaryLevel(group)
+          };
+        });
+        const response = await fetch('/api/tickets/lookups/stocktake-summary.pdf', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            latestSession: sessionLabel(latestSession),
+            previousSession: previousSession ? sessionLabel(previousSession) : '',
+            generatedAt: new Date().toISOString(),
+            category: categoryOption ? categoryOption.textContent : 'Все категории',
+            search: els.search.value || '',
+            hideZero: els.hideZero.checked,
+            rows: rows
+          })
+        });
+        if (!response.ok) {
+          const payload = await response.json().catch(function() { return {}; });
+          throw new Error(payload.error || ('HTTP ' + response.status));
+        }
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'stockcheck-current-state-' + new Date().toISOString().slice(0, 10) + '.pdf';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
+      } catch (error) {
+        window.alert('Не удалось сформировать PDF: ' + (error instanceof Error ? error.message : String(error)));
+      } finally {
+        els.summaryPdf.textContent = originalText;
+        els.summaryPdf.disabled = typeGroups.length === 0;
+      }
     }
     function eqlistParams(entry) {
       const item = entry.base;
@@ -802,7 +914,7 @@ function renderDenseStocktakeHistoryPage() {
     }
     async function load() {
       closeProblemReport();
-      els.refresh.disabled = true; els.reportOpen.disabled = true; els.status.className = 'status'; els.status.textContent = 'Загрузка данных...';
+      els.refresh.disabled = true; els.reportOpen.disabled = true; els.summaryPdf.disabled = true; els.status.className = 'status'; els.status.textContent = 'Загрузка данных...';
       try {
         const response = await fetch('/api/tickets/lookups/stocktake-history?sessionState=all');
         const payload = await response.json();
@@ -819,12 +931,13 @@ function renderDenseStocktakeHistoryPage() {
       } catch (error) {
         els.status.className = 'status error'; els.status.textContent = error instanceof Error ? error.message : String(error);
         rawItems = []; comparisonEntries = []; renderInventory();
-      } finally { els.refresh.disabled = false; els.reportOpen.disabled = comparisonEntries.length === 0; }
+      } finally { els.refresh.disabled = false; els.reportOpen.disabled = comparisonEntries.length === 0; els.summaryPdf.disabled = typeGroups.length === 0; }
     }
     els.refresh.addEventListener('click', load);
+    els.summaryPdf.addEventListener('click', downloadSummaryPdf);
     els.reportOpen.addEventListener('click', openProblemReport);
     els.reportClose.addEventListener('click', closeProblemReport);
-    els.reportPrint.addEventListener('click', function() { window.print(); });
+    els.reportPrint.addEventListener('click', downloadProblemPdf);
     els.category.addEventListener('change', function() { selectedTypeKey = ''; selectedItemKey = ''; rebuild(); });
     els.latest.addEventListener('change', function() { if (els.previous.value === els.latest.value) els.previous.value = ''; selectedTypeKey = ''; selectedItemKey = ''; rebuild(); });
     els.previous.addEventListener('change', function() { if (els.previous.value === els.latest.value) els.previous.value = ''; selectedTypeKey = ''; selectedItemKey = ''; rebuild(); });

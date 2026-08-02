@@ -8,6 +8,7 @@ const hiretrack_eqlist_lookup_1 = require("../services/hiretrack-eqlist-lookup")
 const hiretrack_repair_create_1 = require("../services/hiretrack-repair-create");
 const hiretrack_equipment_lookup_1 = require("../services/hiretrack-equipment-lookup");
 const hiretrack_stocktake_history_1 = require("../services/hiretrack-stocktake-history");
+const stocktake_problem_pdf_1 = require("../services/stocktake-problem-pdf");
 const ticket_store_1 = require("../services/ticket-store");
 const ticketStatusSchema = zod_1.z.enum([
     'received',
@@ -84,6 +85,44 @@ const eqlistLookupSchema = zod_1.z.object({
 const stocktakeHistorySchema = zod_1.z.object({
     sessionState: zod_1.z.enum(['all', 'active', 'inactive']).optional(),
     limit: zod_1.z.coerce.number().int().min(1).max(50000).optional(),
+});
+const stocktakeProblemPdfSchema = zod_1.z.object({
+    latestSession: zod_1.z.string().max(500),
+    previousSession: zod_1.z.string().max(500).default(''),
+    generatedAt: zod_1.z.string().max(100),
+    rows: zod_1.z.array(zod_1.z.object({
+        equipmentType: zod_1.z.string().max(500),
+        barcode: zod_1.z.string().max(200),
+        serialNumber: zod_1.z.string().max(200),
+        inventoryStatus: zod_1.z.string().max(200),
+        currentStatus: zod_1.z.string().max(500),
+        currentStatusNote: zod_1.z.string().max(1000),
+        lastObservation: zod_1.z.string().max(200),
+        lastObservationSource: zod_1.z.string().max(500),
+        kind: zod_1.z.enum(['missing', 'repair', 'inactive']),
+    })).min(1).max(50000),
+});
+const stocktakeSummaryPdfSchema = zod_1.z.object({
+    latestSession: zod_1.z.string().max(500),
+    previousSession: zod_1.z.string().max(500).default(''),
+    generatedAt: zod_1.z.string().max(100),
+    category: zod_1.z.string().max(500),
+    search: zod_1.z.string().max(500).default(''),
+    hideZero: zod_1.z.boolean().default(false),
+    rows: zod_1.z.array(zod_1.z.object({
+        equipmentType: zod_1.z.string().max(500),
+        equipmentTypeId: zod_1.z.string().max(100),
+        total: zod_1.z.number().int().nonnegative(),
+        barcoded: zod_1.z.number().int().nonnegative(),
+        active: zod_1.z.number().int().nonnegative(),
+        repair: zod_1.z.number().int().nonnegative(),
+        previousSeen: zod_1.z.number().int().nonnegative(),
+        latestSeen: zod_1.z.number().int().nonnegative(),
+        notSeen: zod_1.z.number().int().nonnegative(),
+        writtenOff: zod_1.z.number().int().nonnegative(),
+        sold: zod_1.z.number().int().nonnegative(),
+        level: zod_1.z.enum(['ok', 'minor', 'zero', 'low', 'critical']),
+    })).min(1).max(50000),
 });
 exports.ticketsRouter = (0, express_1.Router)();
 const ticketStore = (0, ticket_store_1.createTicketStore)();
@@ -321,6 +360,54 @@ exports.ticketsRouter.get('/lookups/stocktake-history', async (req, res) => {
         return res.status(502).json({
             ok: false,
             error: error instanceof Error ? error.message : 'HireTrack stock-take history lookup failed',
+        });
+    }
+});
+exports.ticketsRouter.post('/lookups/stocktake-problems.pdf', async (req, res) => {
+    const parsed = stocktakeProblemPdfSchema.safeParse(req.body);
+    if (!parsed.success) {
+        return res.status(400).json({
+            ok: false,
+            error: 'Validation failed',
+            issues: parsed.error.flatten(),
+        });
+    }
+    try {
+        const pdf = await (0, stocktake_problem_pdf_1.renderStocktakeProblemPdf)(parsed.data);
+        const date = new Date().toISOString().slice(0, 10);
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="stockcheck-problems-${date}.pdf"`);
+        res.setHeader('Content-Length', String(pdf.length));
+        return res.send(pdf);
+    }
+    catch (error) {
+        return res.status(500).json({
+            ok: false,
+            error: error instanceof Error ? error.message : 'PDF generation failed',
+        });
+    }
+});
+exports.ticketsRouter.post('/lookups/stocktake-summary.pdf', async (req, res) => {
+    const parsed = stocktakeSummaryPdfSchema.safeParse(req.body);
+    if (!parsed.success) {
+        return res.status(400).json({
+            ok: false,
+            error: 'Validation failed',
+            issues: parsed.error.flatten(),
+        });
+    }
+    try {
+        const pdf = await (0, stocktake_problem_pdf_1.renderStocktakeSummaryPdf)(parsed.data);
+        const date = new Date().toISOString().slice(0, 10);
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="stockcheck-current-state-${date}.pdf"`);
+        res.setHeader('Content-Length', String(pdf.length));
+        return res.send(pdf);
+    }
+    catch (error) {
+        return res.status(500).json({
+            ok: false,
+            error: error instanceof Error ? error.message : 'PDF generation failed',
         });
     }
 });

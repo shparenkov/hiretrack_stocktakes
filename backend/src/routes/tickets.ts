@@ -5,6 +5,7 @@ import { lookupEquipmentEqlistsInHiretrack } from '../services/hiretrack-eqlist-
 import { createLoggedFaultInHiretrack } from '../services/hiretrack-repair-create';
 import { lookupEquipmentInHiretrack } from '../services/hiretrack-equipment-lookup';
 import { lookupStocktakeHistoryInHiretrack } from '../services/hiretrack-stocktake-history';
+import { renderStocktakeProblemPdf, renderStocktakeSummaryPdf } from '../services/stocktake-problem-pdf';
 import { HiretrackStockCheckRecord } from '../types';
 import { createTicketStore } from '../services/ticket-store';
 
@@ -91,6 +92,46 @@ const eqlistLookupSchema = z.object({
 const stocktakeHistorySchema = z.object({
   sessionState: z.enum(['all', 'active', 'inactive']).optional(),
   limit: z.coerce.number().int().min(1).max(50000).optional(),
+});
+
+const stocktakeProblemPdfSchema = z.object({
+  latestSession: z.string().max(500),
+  previousSession: z.string().max(500).default(''),
+  generatedAt: z.string().max(100),
+  rows: z.array(z.object({
+    equipmentType: z.string().max(500),
+    barcode: z.string().max(200),
+    serialNumber: z.string().max(200),
+    inventoryStatus: z.string().max(200),
+    currentStatus: z.string().max(500),
+    currentStatusNote: z.string().max(1000),
+    lastObservation: z.string().max(200),
+    lastObservationSource: z.string().max(500),
+    kind: z.enum(['missing', 'repair', 'inactive']),
+  })).min(1).max(50000),
+});
+
+const stocktakeSummaryPdfSchema = z.object({
+  latestSession: z.string().max(500),
+  previousSession: z.string().max(500).default(''),
+  generatedAt: z.string().max(100),
+  category: z.string().max(500),
+  search: z.string().max(500).default(''),
+  hideZero: z.boolean().default(false),
+  rows: z.array(z.object({
+    equipmentType: z.string().max(500),
+    equipmentTypeId: z.string().max(100),
+    total: z.number().int().nonnegative(),
+    barcoded: z.number().int().nonnegative(),
+    active: z.number().int().nonnegative(),
+    repair: z.number().int().nonnegative(),
+    previousSeen: z.number().int().nonnegative(),
+    latestSeen: z.number().int().nonnegative(),
+    notSeen: z.number().int().nonnegative(),
+    writtenOff: z.number().int().nonnegative(),
+    sold: z.number().int().nonnegative(),
+    level: z.enum(['ok', 'minor', 'zero', 'low', 'critical']),
+  })).min(1).max(50000),
 });
 
 export const ticketsRouter = Router();
@@ -376,6 +417,56 @@ ticketsRouter.get('/lookups/stocktake-history', async (req, res) => {
     return res.status(502).json({
       ok: false,
       error: error instanceof Error ? error.message : 'HireTrack stock-take history lookup failed',
+    });
+  }
+});
+
+ticketsRouter.post('/lookups/stocktake-problems.pdf', async (req, res) => {
+  const parsed = stocktakeProblemPdfSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Validation failed',
+      issues: parsed.error.flatten(),
+    });
+  }
+
+  try {
+    const pdf = await renderStocktakeProblemPdf(parsed.data);
+    const date = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="stockcheck-problems-${date}.pdf"`);
+    res.setHeader('Content-Length', String(pdf.length));
+    return res.send(pdf);
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'PDF generation failed',
+    });
+  }
+});
+
+ticketsRouter.post('/lookups/stocktake-summary.pdf', async (req, res) => {
+  const parsed = stocktakeSummaryPdfSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Validation failed',
+      issues: parsed.error.flatten(),
+    });
+  }
+
+  try {
+    const pdf = await renderStocktakeSummaryPdf(parsed.data);
+    const date = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="stockcheck-current-state-${date}.pdf"`);
+    res.setHeader('Content-Length', String(pdf.length));
+    return res.send(pdf);
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'PDF generation failed',
     });
   }
 });
