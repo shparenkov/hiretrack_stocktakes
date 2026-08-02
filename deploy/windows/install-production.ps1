@@ -116,6 +116,8 @@ New-Item -ItemType Directory -Path $InstallRoot -Force | Out-Null
 if (Test-Path -LiteralPath (Join-Path $appDirectory '.git')) {
   Push-Location $appDirectory
   try {
+    git config core.autocrlf false
+    git restore --worktree -- dist package-lock.json
     git fetch origin $Branch
     git checkout $Branch
     git pull --ff-only origin $Branch
@@ -131,6 +133,8 @@ if (Test-Path -LiteralPath (Join-Path $appDirectory '.git')) {
   git clone --branch $Branch --single-branch $RepoUrl $appDirectory
 }
 
+git -C $appDirectory config core.autocrlf false
+
 Write-Step 'Installing dependencies and building application'
 Push-Location $appDirectory
 try {
@@ -140,8 +144,6 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'Prisma Client generation failed.' }
   & npm.cmd run build
   if ($LASTEXITCODE -ne 0) { throw 'npm run build failed.' }
-  & npm.cmd prune --omit=dev
-  if ($LASTEXITCODE -ne 0) { throw 'npm prune failed.' }
 } finally {
   Pop-Location
 }

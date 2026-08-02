@@ -23,6 +23,8 @@ if (-not (Test-Path -LiteralPath $wrapperPath)) {
 Write-Host "Updating HireTrack Stocktakes from $Branch..." -ForegroundColor Cyan
 Push-Location $appDirectory
 try {
+  git config core.autocrlf false
+  git restore --worktree -- dist package-lock.json
   git fetch origin $Branch
   git checkout $Branch
   git pull --ff-only origin $Branch
@@ -35,8 +37,6 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Prisma Client generation failed.' }
     & npm.cmd run build
     if ($LASTEXITCODE -ne 0) { throw 'npm run build failed.' }
-    & npm.cmd prune --omit=dev
-    if ($LASTEXITCODE -ne 0) { throw 'npm prune failed.' }
   } catch {
     & $wrapperPath start
     throw
