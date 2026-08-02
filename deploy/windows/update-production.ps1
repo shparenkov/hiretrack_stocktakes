@@ -31,6 +31,8 @@ try {
   try {
     & npm.cmd ci
     if ($LASTEXITCODE -ne 0) { throw 'npm ci failed.' }
+    & npm.cmd run prisma:generate
+    if ($LASTEXITCODE -ne 0) { throw 'Prisma Client generation failed.' }
     & npm.cmd run build
     if ($LASTEXITCODE -ne 0) { throw 'npm run build failed.' }
     & npm.cmd prune --omit=dev
