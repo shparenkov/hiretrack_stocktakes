@@ -47,6 +47,9 @@ The stock-check UI and API require a password. Store it as a single line in
 service after changing the password. Existing browser sessions are invalidated
 automatically.
 
+Sessions last 30 days by default. Set `STOCKTAKE_SESSION_DAYS` in the service
+environment to a value from `1` to `365` to override the duration.
+
 To deploy a later `master` update:
 
 ```powershell

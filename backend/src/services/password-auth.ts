@@ -3,11 +3,19 @@ import fs from 'fs';
 import { NextFunction, Request, Response } from 'express';
 
 const COOKIE_NAME = 'stocktake_session';
-const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+const DEFAULT_SESSION_DAYS = 30;
 const FAILURE_WINDOW_MS = 15 * 60 * 1000;
 const MAX_FAILURES = 8;
 
 type FailureRecord = { count: number; resetAt: number };
+
+function sessionTtlMs(): number {
+  const configuredDays = Number(process.env.STOCKTAKE_SESSION_DAYS || DEFAULT_SESSION_DAYS);
+  const days = Number.isFinite(configuredDays)
+    ? Math.min(365, Math.max(1, configuredDays))
+    : DEFAULT_SESSION_DAYS;
+  return days * 24 * 60 * 60 * 1000;
+}
 
 function readPassword(): string {
   const directPassword = process.env.STOCKTAKE_ACCESS_PASSWORD?.trim();
@@ -103,6 +111,7 @@ function loginPage(errorMessage = ''): string {
 
 export function installPasswordAuth(app: import('express').Express): void {
   const password = readPassword();
+  const sessionDurationMs = sessionTtlMs();
   if (!password) {
     throw new Error('STOCKTAKE_ACCESS_PASSWORD or STOCKTAKE_ACCESS_PASSWORD_FILE must be configured.');
   }
@@ -137,10 +146,10 @@ export function installPasswordAuth(app: import('express').Express): void {
     }
 
     failures.delete(key);
-    const expiresAt = String(now + SESSION_TTL_MS);
+    const expiresAt = String(now + sessionDurationMs);
     const token = `${expiresAt}.${signature(expiresAt, password)}`;
     const secure = isHttps(req) ? '; Secure' : '';
-    res.setHeader('Set-Cookie', `${COOKIE_NAME}=${token}; Path=/; Max-Age=${SESSION_TTL_MS / 1000}; HttpOnly; SameSite=Lax${secure}`);
+    res.setHeader('Set-Cookie', `${COOKIE_NAME}=${token}; Path=/; Max-Age=${sessionDurationMs / 1000}; HttpOnly; SameSite=Lax${secure}`);
     return res.redirect('/bitrix/tickets/stocktake-history/');
   });
 
