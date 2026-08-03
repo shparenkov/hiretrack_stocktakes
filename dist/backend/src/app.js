@@ -10,6 +10,7 @@ const fs_1 = __importDefault(require("fs"));
 const tickets_1 = require("./routes/tickets");
 const bitrix_ticket_app_1 = require("./services/bitrix-ticket-app");
 const password_auth_1 = require("./services/password-auth");
+const portal_page_1 = require("./services/portal-page");
 function createApp() {
     const app = (0, express_1.default)();
     app.set('trust proxy', 'loopback');
@@ -28,6 +29,9 @@ function createApp() {
         });
     });
     (0, password_auth_1.installPasswordAuth)(app);
+    app.get('/', (_req, res) => {
+        res.type('html').send((0, portal_page_1.renderHiretrackPortalPage)());
+    });
     app.use('/tickets', tickets_1.ticketsRouter);
     app.use('/api/tickets', tickets_1.ticketsRouter);
     app.all(['/bitrix/tickets/app', '/bitrix/tickets/install'], (_req, res) => {

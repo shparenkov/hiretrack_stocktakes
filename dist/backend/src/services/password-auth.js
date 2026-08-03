@@ -6,7 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.installPasswordAuth = installPasswordAuth;
 const crypto_1 = __importDefault(require("crypto"));
 const fs_1 = __importDefault(require("fs"));
-const COOKIE_NAME = 'stocktake_session';
+const COOKIE_NAME = 'hiretrack_session';
 const DEFAULT_SESSION_DAYS = 30;
 const FAILURE_WINDOW_MS = 15 * 60 * 1000;
 const MAX_FAILURES = 8;
@@ -99,7 +99,7 @@ function loginPage(errorMessage = '') {
 </head>
 <body>
   <main>
-    <header><h1>HireTrack Stock Check</h1><p>Введите пароль для доступа к инвентаризации</p></header>
+    <header><h1>HireTrack NX</h1><p>Вход в рабочие инструменты</p></header>
     <form method="post" action="/login">
       ${error}
       <label for="password">Пароль</label>
@@ -119,7 +119,7 @@ function installPasswordAuth(app) {
     const failures = new Map();
     app.get('/login', (req, res) => {
         if (hasValidSession(req, password))
-            return res.redirect('/bitrix/tickets/stocktake-history/');
+            return res.redirect('/');
         return res.type('html').send(loginPage());
     });
     app.post('/login', (req, res) => {
@@ -149,7 +149,7 @@ function installPasswordAuth(app) {
         const token = `${expiresAt}.${signature(expiresAt, password)}`;
         const secure = isHttps(req) ? '; Secure' : '';
         res.setHeader('Set-Cookie', `${COOKIE_NAME}=${token}; Path=/; Max-Age=${sessionDurationMs / 1000}; HttpOnly; SameSite=Lax${secure}`);
-        return res.redirect('/bitrix/tickets/stocktake-history/');
+        return res.redirect('/');
     });
     app.use((req, res, next) => {
         if (hasValidSession(req, password))

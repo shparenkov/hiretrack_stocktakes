@@ -65,6 +65,8 @@ function renderDenseStocktakeHistoryPage() {
       cursor: pointer;
     }
     .refresh:disabled { opacity: .55; cursor: default; }
+    .nav-link { border:1px solid #7ea3c9; border-radius:3px; padding:6px 10px; color:#fff; background:#173f72; text-decoration:none; white-space:nowrap; }
+    .nav-link:hover { background:#3472b2; }
     .report-panel { position: fixed; inset: 0; z-index: 20; display: grid; grid-template-rows: auto auto minmax(0, 1fr); color: var(--ink); background: #fff; }
     .report-panel[hidden] { display: none; }
     .report-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 14px; color: #fff; background: var(--navy); }
@@ -218,7 +220,7 @@ function renderDenseStocktakeHistoryPage() {
   <main class="app">
     <header class="topbar">
       <h1>Stock Check <span class="sub">история и расхождения по инвентаризациям</span></h1>
-      <div class="top-actions"><span id="status" class="status">Загрузка...</span><button id="summaryPdf" class="refresh" type="button" disabled>Состояние / PDF</button><button id="problemReportOpen" class="refresh" type="button" disabled>Проблемы / PDF</button><button id="refresh" class="refresh" type="button">Обновить</button></div>
+      <div class="top-actions"><a class="nav-link" href="/">Главная</a><a class="nav-link" href="/service-tickets/">Сервис</a><span id="status" class="status">Загрузка...</span><button id="summaryPdf" class="refresh" type="button" disabled>Состояние / PDF</button><button id="problemReportOpen" class="refresh" type="button" disabled>Проблемы / PDF</button><button id="refresh" class="refresh" type="button">Обновить</button></div>
     </header>
     <section class="filters" aria-label="Фильтры">
       <div class="field category"><label for="category">MasterCat / Category</label><select id="category"></select></div>

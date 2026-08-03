@@ -10,6 +10,7 @@ import {
   resolveTicketsFrontendIndexPath,
 } from './services/bitrix-ticket-app';
 import { installPasswordAuth } from './services/password-auth';
+import { renderHiretrackPortalPage } from './services/portal-page';
 
 export function createApp() {
   const app = express();
@@ -32,6 +33,10 @@ export function createApp() {
   });
 
   installPasswordAuth(app);
+
+  app.get('/', (_req, res) => {
+    res.type('html').send(renderHiretrackPortalPage());
+  });
 
   app.use('/tickets', ticketsRouter);
   app.use('/api/tickets', ticketsRouter);
