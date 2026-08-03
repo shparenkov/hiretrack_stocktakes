@@ -217,7 +217,7 @@ export function renderDenseStocktakeHistoryPage() {
   <main class="app">
     <header class="topbar">
       <h1>Stock Check <span class="sub">история и расхождения по инвентаризациям</span></h1>
-      <div class="top-actions"><a class="nav-link" href="/">Главная</a><a class="nav-link" href="/service-tickets/">Сервис</a><span id="status" class="status">Загрузка...</span><button id="summaryPdf" class="refresh" type="button" disabled>Состояние / PDF</button><button id="problemReportOpen" class="refresh" type="button" disabled>Проблемы / PDF</button><button id="refresh" class="refresh" type="button">Обновить</button></div>
+      <div class="top-actions"><a class="nav-link" href="/">Главная</a><a class="nav-link" href="/service-tickets/">Сервис</a><a class="nav-link" href="/daybook/">План склада</a><span id="status" class="status">Загрузка...</span><button id="summaryPdf" class="refresh" type="button" disabled>Состояние / PDF</button><button id="problemReportOpen" class="refresh" type="button" disabled>Проблемы / PDF</button><button id="refresh" class="refresh" type="button">Обновить</button></div>
     </header>
     <section class="filters" aria-label="Фильтры">
       <div class="field category"><label for="category">MasterCat / Category</label><select id="category"></select></div>

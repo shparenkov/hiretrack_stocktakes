@@ -12,11 +12,11 @@ export function renderHiretrackPortalPage(): string {
     .topbar { min-height:52px; display:flex; align-items:center; justify-content:space-between; gap:16px; padding:9px 16px; color:#fff; background:var(--navy); border-bottom:3px solid #0e2c51; }
     .brand { font-size:18px; font-weight:700; letter-spacing:.01em; }
     .brand span { margin-left:9px; color:#c9d8e9; font-size:12px; font-weight:400; }
-    main { width:min(980px,calc(100% - 32px)); margin:0 auto; padding:56px 0; }
+    main { width:min(1220px,calc(100% - 32px)); margin:0 auto; padding:56px 0; }
     .intro { margin-bottom:24px; }
     .intro h1 { margin:0 0 8px; font-size:28px; color:var(--navy); }
     .intro p { margin:0; color:var(--muted); font-size:14px; }
-    .sections { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1px; border:1px solid var(--line); background:var(--line); }
+    .sections { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:1px; border:1px solid var(--line); background:var(--line); }
     .section { min-height:260px; display:flex; flex-direction:column; padding:0; color:inherit; background:#fff; text-decoration:none; }
     .section-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:11px 14px; color:#fff; background:var(--blue); border-bottom:1px solid #143f70; }
     .section-head strong { font-size:15px; }
@@ -46,6 +46,11 @@ export function renderHiretrackPortalPage(): string {
         <div class="section-head"><strong>Service Tickets</strong><span class="code">REPAIR</span></div>
         <div class="section-body"><h2>Сервис и ремонт</h2><p>Приём оборудования по штрихкоду, регистрация неисправностей и контроль тикетов.</p><div class="facts"><span>Сканер barcode с камеры</span><span>Проверка текущей работы HireTrack</span><span>Logged Fault и история действий</span></div></div>
         <span class="open">Открыть сервис →</span>
+      </a>
+      <a class="section" href="/daybook/">
+        <div class="section-head"><strong>Daybook</strong><span class="code">WAREHOUSE</span></div>
+        <div class="section-body"><h2>План склада</h2><p>Сборки на сегодня и ближайшие дни напрямую из HireTrack NX.</p><div class="facts"><span>Работы и Equipment Lists</span><span>Готовность каждой позиции</span><span>Автообновление каждые 30 секунд</span></div></div>
+        <span class="open">Открыть план склада →</span>
       </a>
     </div>
   </main>
