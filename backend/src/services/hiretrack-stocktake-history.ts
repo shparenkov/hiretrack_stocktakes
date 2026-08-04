@@ -1,82 +1,7 @@
-import fs from 'fs';
-import path from 'path';
-import https from 'https';
-import http from 'http';
-import { URL } from 'url';
 import { HiretrackStocktakeHistoryRecord } from '../types';
-
-interface HiretrackConfig {
-  hiretrack?: {
-    baseUrl?: string;
-    headers?: Record<string, string>;
-    stockTakeHistoryQbeId?: number;
-  };
-  poller?: {
-    timeoutMs?: number;
-  };
-}
+import { runHiretrackStocktakeRead } from './hiretrack-odbc-read';
 
 export type StocktakeSessionState = 'all' | 'active' | 'inactive';
-
-function resolveConfigPath() {
-  return path.resolve(process.cwd(), '..', 'hiretrack.config.json');
-}
-
-function loadHiretrackConfig(): HiretrackConfig {
-  const configPath = resolveConfigPath();
-  return JSON.parse(fs.readFileSync(configPath, 'utf8')) as HiretrackConfig;
-}
-
-function requestJson(method: string, targetUrl: string, headers: Record<string, string>, timeoutMs: number) {
-  const url = new URL(targetUrl);
-  const transport = url.protocol === 'https:' ? https : http;
-
-  return new Promise<unknown>((resolve, reject) => {
-    const req = transport.request(
-      {
-        protocol: url.protocol,
-        hostname: url.hostname,
-        port: url.port,
-        path: `${url.pathname}${url.search}`,
-        method,
-        headers,
-        rejectUnauthorized: false,
-        timeout: timeoutMs,
-      },
-      (res) => {
-        let data = '';
-        res.setEncoding('utf8');
-        res.on('data', (chunk) => {
-          data += chunk;
-        });
-        res.on('end', () => {
-          let parsed: unknown = data;
-          try {
-            parsed = data ? JSON.parse(data) : null;
-          } catch (error) {
-            reject(
-              new Error(`Invalid JSON from ${targetUrl}: ${error instanceof Error ? error.message : String(error)}`),
-            );
-            return;
-          }
-
-          if ((res.statusCode || 0) >= 400) {
-            reject(new Error(`HTTP ${res.statusCode} from ${targetUrl}: ${JSON.stringify(parsed)}`));
-            return;
-          }
-
-          resolve(parsed);
-        });
-      },
-    );
-
-    req.on('timeout', () => {
-      req.destroy(new Error(`Request timeout after ${timeoutMs}ms: ${targetUrl}`));
-    });
-    req.on('error', reject);
-    req.end();
-  });
-}
 
 function normalizeString(value: unknown): string | null {
   if (value == null) {
@@ -153,33 +78,9 @@ function deriveItemState(commissionStatus: number | null): 'active' | 'inactive'
   return 'unknown';
 }
 
-export async function lookupStocktakeHistoryInHiretrack(input?: {
-  sessionState?: StocktakeSessionState;
-  limit?: number;
-}): Promise<HiretrackStocktakeHistoryRecord[]> {
-  const config = loadHiretrackConfig();
-  const qbeId = Number(config.hiretrack?.stockTakeHistoryQbeId || 0);
-
-  if (!qbeId) {
-    throw new Error(
-      'HireTrack stock-take history QBE is not configured. Add hiretrack.stockTakeHistoryQbeId after creating the QBE.',
-    );
-  }
-
-  const params = new URLSearchParams({
-    qbe_id: String(qbeId),
-  });
-
-  const url = `${config.hiretrack?.baseUrl}/api_v1/GetSearchResults?${params.toString()}`;
-  const raw = await requestJson('GET', url, config.hiretrack?.headers || {}, Number(config.poller?.timeoutMs || 15000));
-
-  if (!Array.isArray(raw) || raw.length === 0) {
-    return [];
-  }
-
-  const items = raw
-    .map((entry) => {
-      const row = entry as Record<string, unknown>;
+function mapHistoryRows(raw: Record<string, unknown>[]): HiretrackStocktakeHistoryRecord[] {
+  return raw
+    .map((row) => {
       const commissionStatus = normalizeInt(row.CommissionStatus);
       const disposalReason = normalizeDisposalReason(row.DisposalReason);
       const reportedState = normalizeItemState(row.CurrentItemState);
@@ -219,6 +120,45 @@ export async function lookupStocktakeHistoryInHiretrack(input?: {
       } satisfies HiretrackStocktakeHistoryRecord;
     })
     .filter((row) => row.stockTakeId !== null);
+}
+
+const configuredCacheMs = Number(process.env.STOCKTAKE_ODBC_CACHE_MS || 30000);
+const cacheMs = Number.isFinite(configuredCacheMs) ? Math.max(0, configuredCacheMs) : 30000;
+let historyCache: { expiresAt: number; items: HiretrackStocktakeHistoryRecord[] } | null = null;
+let pendingHistoryRead: Promise<HiretrackStocktakeHistoryRecord[]> | null = null;
+
+function refreshHistoryRows(): Promise<HiretrackStocktakeHistoryRecord[]> {
+  if (!pendingHistoryRead) {
+    pendingHistoryRead = runHiretrackStocktakeRead<Record<string, unknown>[]>()
+      .then(mapHistoryRows)
+      .then((items) => {
+        historyCache = { expiresAt: Date.now() + cacheMs, items };
+        return items;
+      })
+      .finally(() => {
+        pendingHistoryRead = null;
+      });
+  }
+  return pendingHistoryRead;
+}
+
+async function loadHistoryRows(): Promise<HiretrackStocktakeHistoryRecord[]> {
+  if (!historyCache) {
+    return refreshHistoryRows();
+  }
+  if (historyCache.expiresAt <= Date.now()) {
+    void refreshHistoryRows().catch((error) => {
+      console.error('Background HireTrack stock-take refresh failed:', error);
+    });
+  }
+  return historyCache.items;
+}
+
+export async function lookupStocktakeHistoryInHiretrack(input?: {
+  sessionState?: StocktakeSessionState;
+  limit?: number;
+}): Promise<HiretrackStocktakeHistoryRecord[]> {
+  const items = await loadHistoryRows();
 
   const sessionState = input?.sessionState || 'all';
   const filteredItems = items.filter((row) => {

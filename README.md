@@ -8,6 +8,8 @@ Current status:
 - repository seam in place
 - `memory` store is default for fast development
 - `prisma` store mode is prepared for DB-backed switch
+- StockCheck history reads directly from HireTrack through the read-only 32-bit `pyodbc` DSN
+- stock-take responses are cached for 30 seconds and concurrent reads share one ODBC query
 
 Reference docs:
 
@@ -40,6 +42,11 @@ Invoke-WebRequest -UseBasicParsing `
 
 The private HireTrack API configuration must be stored outside the repository
 at `C:\Services\hiretrack.config.json`.
+
+StockCheck history does not use QBE. The Windows service starts the bundled
+Python bridge with the 32-bit `HireTrack DSN`; `pyodbc` must be installed for
+that Python runtime. QBE configuration remains available only for legacy
+equipment and repair endpoints.
 
 The stock-check UI and API require a password. Store it as a single line in
 `C:\Services\hiretrack-access-password.txt`; the file is read through the

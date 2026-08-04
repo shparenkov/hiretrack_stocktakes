@@ -72,8 +72,9 @@ function Install-WinSw {
   Invoke-WebRequest -UseBasicParsing -Headers $headers -Uri $asset.browser_download_url -OutFile $wrapperPath
 }
 
-function Write-ServiceConfig([string]$NodePath) {
+function Write-ServiceConfig([string]$NodePath, [string]$PythonPath) {
   $escapedNodePath = [Security.SecurityElement]::Escape($NodePath)
+  $escapedPythonPath = [Security.SecurityElement]::Escape($PythonPath)
   $escapedAppDirectory = [Security.SecurityElement]::Escape($appDirectory)
   $xml = @"
 <service>
@@ -93,6 +94,11 @@ function Write-ServiceConfig([string]$NodePath) {
   <env name="HOST" value="0.0.0.0" />
   <env name="TICKETS_STORE_MODE" value="memory" />
   <env name="STOCKTAKE_ACCESS_PASSWORD_FILE" value="C:\Services\hiretrack-access-password.txt" />
+  <env name="HIRETRACK_PYTHON" value="$escapedPythonPath" />
+  <env name="HIRETRACK_ODBC_DSN" value="HireTrack DSN" />
+  <env name="HIRETRACK_ODBC_TIMEOUT_MS" value="90000" />
+  <env name="HIRETRACK_ODBC_QUERY_TIMEOUT" value="60" />
+  <env name="STOCKTAKE_ODBC_CACHE_MS" value="30000" />
   <logpath>%BASE%\logs</logpath>
   <log mode="roll-by-size">
     <sizeThreshold>10240</sizeThreshold>
@@ -111,6 +117,9 @@ Install-NodeLts
 if (-not (Get-Command node -ErrorAction SilentlyContinue) -or -not (Get-Command npm.cmd -ErrorAction SilentlyContinue)) {
   throw 'Node.js or npm was not found after installation.'
 }
+$python = Get-Command python.exe -ErrorAction Stop
+& $python.Source -c 'import pyodbc'
+if ($LASTEXITCODE -ne 0) { throw 'The 32-bit Python pyodbc package is required.' }
 
 Write-Step 'Preparing application directory'
 New-Item -ItemType Directory -Path $InstallRoot -Force | Out-Null
@@ -157,7 +166,7 @@ try {
 
 Install-WinSw
 $nodePath = (Get-Command node -ErrorAction Stop).Source
-Write-ServiceConfig -NodePath $nodePath
+Write-ServiceConfig -NodePath $nodePath -PythonPath $python.Source
 New-Item -ItemType Directory -Path (Join-Path $appDirectory 'logs') -Force | Out-Null
 
 Write-Step 'Allowing the application port from Tailscale only'

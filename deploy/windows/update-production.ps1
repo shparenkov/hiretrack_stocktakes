@@ -12,6 +12,11 @@ $serviceId = 'HireTrackStocktakes'
 $appDirectory = Join-Path $InstallRoot 'hiretrack_stocktakes'
 $wrapperPath = Join-Path $appDirectory "$serviceId.exe"
 $healthUrl = "http://127.0.0.1:$Port/health"
+$wrapperConfigPath = Join-Path $appDirectory "$serviceId.xml"
+$python = Get-Command python.exe -ErrorAction Stop
+
+& $python.Source -c 'import pyodbc'
+if ($LASTEXITCODE -ne 0) { throw 'The 32-bit Python pyodbc package is required.' }
 
 if (-not (Test-Path -LiteralPath (Join-Path $appDirectory '.git'))) {
   throw "$appDirectory is not a Git checkout. Run install-production.ps1 first."
@@ -43,6 +48,25 @@ try {
     git add -- dist
     git diff --cached --exit-code
     if ($LASTEXITCODE -ne 0) { throw 'Generated dist changed the Git index unexpectedly.' }
+
+    [xml]$serviceConfig = Get-Content -LiteralPath $wrapperConfigPath
+    $serviceEnvironment = @{
+      HIRETRACK_PYTHON = $python.Source
+      HIRETRACK_ODBC_DSN = 'HireTrack DSN'
+      HIRETRACK_ODBC_TIMEOUT_MS = '90000'
+      HIRETRACK_ODBC_QUERY_TIMEOUT = '60'
+      STOCKTAKE_ODBC_CACHE_MS = '30000'
+    }
+    foreach ($entry in $serviceEnvironment.GetEnumerator()) {
+      $node = $serviceConfig.service.env | Where-Object { $_.name -eq $entry.Key } | Select-Object -First 1
+      if (-not $node) {
+        $node = $serviceConfig.CreateElement('env')
+        $node.SetAttribute('name', $entry.Key)
+        [void]$serviceConfig.service.AppendChild($node)
+      }
+      $node.SetAttribute('value', $entry.Value)
+    }
+    $serviceConfig.Save($wrapperConfigPath)
   } catch {
     & $wrapperPath start
     throw
