@@ -37,7 +37,7 @@ STOCKTAKE_HISTORY_QUERY = """
         I.ItemRef,
         I.Barcode,
         I.SerialNo AS SerialNumber,
-        I.CommissionStatus,
+        CAST(I.CommissionStatus AS SMALLINT) AS CommissionStatus,
         I.CurrentJob AS CurrentEqlistId,
         CE.Eql_Name AS CurrentEqlistName,
         J.JobNo AS CurrentJobNo,
@@ -48,7 +48,7 @@ STOCKTAKE_HISTORY_QUERY = """
         D."ActionedDate" AS ActionedDate,
         D."ActionNotes" AS ActionNotes,
         D."ActionedNotes" AS ActionedNotes,
-        BID.Reason AS DisposalReason,
+        CAST(BID.Reason AS SMALLINT) AS DisposalReason,
         BID.DisposalDate,
         BID.Notes AS DisposalNotes
     FROM StockTakeDetails D
