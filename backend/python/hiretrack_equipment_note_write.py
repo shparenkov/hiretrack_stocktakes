@@ -74,20 +74,30 @@ def add_note_line(cursor, params):
     if note_id is None or eqtype is None or qty is None:
         raise ValueError("add-note-line requires 'noteId', 'eqtype' and 'qty'")
 
-    price_each = params.get("priceEach", 0)
-
-    cursor.execute("SELECT TOP 1 category FROM hetype WHERE type = ?", eqtype)
+    cursor.execute("SELECT TOP 1 category, daily FROM hetype WHERE type = ?", eqtype)
     row = cursor.fetchone()
     category = row[0] if row else None
+    default_daily_rate = float(row[1]) if row and row[1] is not None else 0.0
+
+    # priceEach is optional: when the caller doesn't supply one, fall back to
+    # the equipment's own Hetype.Daily rate, matching what HireTrack NX's own
+    # client uses for a manually-added line (confirmed against a real line:
+    # qty=1, price=2500 -> LinePrice=2500). Previously this defaulted to 0,
+    # which left every auto-created line priced at zero.
+    price_each = params.get("priceEach")
+    if price_each is None:
+        price_each = default_daily_rate
+    price_each = float(price_each)
+    line_price = qty * price_each
 
     cursor.execute(
         "INSERT INTO notebookdetails "
-        "(xnote, qty, eqtype, agreedunitprice, rectype, warehouse, xcategory) "
-        "VALUES (?, ?, ?, ?, 1, 1, ?)",
-        note_id, qty, eqtype, price_each, category,
+        "(xnote, qty, eqtype, listunitprice, agreedunitprice, lineprice, rectype, warehouse, xcategory) "
+        "VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?)",
+        note_id, qty, eqtype, price_each, price_each, line_price, category,
     )
 
-    return {"noteId": note_id, "eqtype": eqtype, "qty": qty}
+    return {"noteId": note_id, "eqtype": eqtype, "qty": qty, "priceEach": price_each}
 
 
 def main():

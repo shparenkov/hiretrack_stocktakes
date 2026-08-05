@@ -56,7 +56,10 @@ export async function createEquipmentNoteWithLines(
         noteId,
         eqtype: line.eqtype,
         qty: line.qty,
-        priceEach: line.priceEach ?? 0,
+        // Omit entirely rather than defaulting to 0 - the write bridge falls
+        // back to the equipment's own Hetype.Daily rate when priceEach isn't
+        // supplied, so 0 here would wrongly force every line to price zero.
+        priceEach: line.priceEach ?? null,
       });
       linesWritten += 1;
     } catch (error) {
