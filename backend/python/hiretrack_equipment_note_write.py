@@ -40,10 +40,17 @@ def create_note(cursor, params):
     currency = params.get("currency", 0)
     price_scheme = params.get("priceScheme", 0)
 
+    # NexusDB refuses to call a data-modifying function from inside a plain
+    # SELECT ("Functions that modify data may not be called in this
+    # context") - confirmed live against production. The ODBC CALL escape is
+    # required instead, and NexusDB doesn't support the "{? = CALL ...}"
+    # output-parameter form either (syntax error) - fetch the new id via
+    # LASTAUTOINC afterward, same pattern HireTrack's own procedures use.
     cursor.execute(
-        "SELECT CreateNewNote(?, ?, ?, ?, ?) AS NoteId FROM #dummy",
+        "{CALL CreateNewNote(?, ?, ?, ?, ?)}",
         title, user, site, currency, price_scheme,
     )
+    cursor.execute("SELECT LASTAUTOINC FROM #dummy")
     row = cursor.fetchone()
     if not row or row[0] is None:
         raise ValueError("CreateNewNote did not return a note id")
