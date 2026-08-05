@@ -77,8 +77,8 @@ EQUIPMENT_CATALOG_BASE_QUERY = """
         H."Shortcode" AS Shortcode,
         H."Comments" AS Comments,
         H."LongDescription" AS LongDescription,
-        H."Class" AS Class,
-        H."Visibility" AS Visibility,
+        CAST(H."Class" AS SMALLINT) AS Class,
+        CAST(H."Visibility" AS SMALLINT) AS Visibility,
         C."Category" AS CategoryId,
         C."Description" AS CategoryName
     FROM "Hetype" H
