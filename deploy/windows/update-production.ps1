@@ -56,6 +56,7 @@ try {
       HIRETRACK_ODBC_TIMEOUT_MS = '90000'
       HIRETRACK_ODBC_QUERY_TIMEOUT = '60'
       STOCKTAKE_ODBC_CACHE_MS = '30000'
+      HIRETRACK_WRITE_ODBC_DSN = 'Claude'
     }
     foreach ($entry in $serviceEnvironment.GetEnumerator()) {
       $node = $serviceConfig.service.env | Where-Object { $_.name -eq $entry.Key } | Select-Object -First 1

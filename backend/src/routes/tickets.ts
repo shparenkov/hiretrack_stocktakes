@@ -5,6 +5,8 @@ import { lookupEquipmentEqlistsInHiretrack } from '../services/hiretrack-eqlist-
 import { createLoggedFaultInHiretrack } from '../services/hiretrack-repair-create';
 import { lookupEquipmentInHiretrack } from '../services/hiretrack-equipment-lookup';
 import { lookupStocktakeHistoryInHiretrack } from '../services/hiretrack-stocktake-history';
+import { getEquipmentCatalog } from '../services/hiretrack-equipment-catalog';
+import { createEquipmentNoteWithLines } from '../services/hiretrack-equipment-note-write';
 import { renderStocktakeProblemPdf, renderStocktakeSummaryPdf } from '../services/stocktake-problem-pdf';
 import { HiretrackStockCheckRecord } from '../types';
 import { createTicketStore } from '../services/ticket-store';
@@ -92,6 +94,23 @@ const eqlistLookupSchema = z.object({
 const stocktakeHistorySchema = z.object({
   sessionState: z.enum(['all', 'active', 'inactive']).optional(),
   limit: z.coerce.number().int().min(1).max(50000).optional(),
+});
+
+const equipmentNoteLineSchema = z.object({
+  eqtype: z.coerce.number().int().positive(),
+  qty: z.coerce.number().positive(),
+  priceEach: z.coerce.number().optional(),
+});
+
+const equipmentNoteCreateSchema = z.object({
+  title: z.string().min(1).max(50),
+  user: z.coerce.number().int().optional(),
+  site: z.coerce.number().int().optional(),
+  currency: z.coerce.number().int().optional(),
+  priceScheme: z.coerce.number().int().optional(),
+  clientName: z.string().max(255).optional(),
+  clientId: z.coerce.number().int().optional(),
+  lines: z.array(equipmentNoteLineSchema).min(1).max(500),
 });
 
 const stocktakeProblemPdfSchema = z.object({
@@ -417,6 +436,39 @@ ticketsRouter.get('/lookups/stocktake-history', async (req, res) => {
     return res.status(502).json({
       ok: false,
       error: error instanceof Error ? error.message : 'HireTrack stock-take history lookup failed',
+    });
+  }
+});
+
+ticketsRouter.get('/lookups/equipment-catalog', async (_req, res) => {
+  try {
+    const items = await getEquipmentCatalog();
+    return res.json({ ok: true, items });
+  } catch (error) {
+    return res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'HireTrack equipment catalog lookup failed',
+    });
+  }
+});
+
+ticketsRouter.post('/lookups/equipment-notes', async (req, res) => {
+  const parsed = equipmentNoteCreateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Validation failed',
+      issues: parsed.error.flatten(),
+    });
+  }
+
+  try {
+    const result = await createEquipmentNoteWithLines(parsed.data);
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    return res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'HireTrack note creation failed',
     });
   }
 });

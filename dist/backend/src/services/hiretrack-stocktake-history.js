@@ -118,7 +118,7 @@ let historyCache = null;
 let pendingHistoryRead = null;
 function refreshHistoryRows() {
     if (!pendingHistoryRead) {
-        pendingHistoryRead = (0, hiretrack_odbc_read_1.runHiretrackStocktakeRead)()
+        pendingHistoryRead = (0, hiretrack_odbc_read_1.runHiretrackOdbcRead)({ operation: 'stocktake-history' })
             .then(mapHistoryRows)
             .then((items) => {
             historyCache = { expiresAt: Date.now() + cacheMs, items };

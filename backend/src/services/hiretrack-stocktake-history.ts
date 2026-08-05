@@ -1,5 +1,5 @@
 import { HiretrackStocktakeHistoryRecord } from '../types';
-import { runHiretrackStocktakeRead } from './hiretrack-odbc-read';
+import { runHiretrackOdbcRead } from './hiretrack-odbc-read';
 
 export type StocktakeSessionState = 'all' | 'active' | 'inactive';
 
@@ -129,7 +129,7 @@ let pendingHistoryRead: Promise<HiretrackStocktakeHistoryRecord[]> | null = null
 
 function refreshHistoryRows(): Promise<HiretrackStocktakeHistoryRecord[]> {
   if (!pendingHistoryRead) {
-    pendingHistoryRead = runHiretrackStocktakeRead<Record<string, unknown>[]>()
+    pendingHistoryRead = runHiretrackOdbcRead<Record<string, unknown>[]>({ operation: 'stocktake-history' })
       .then(mapHistoryRows)
       .then((items) => {
         historyCache = { expiresAt: Date.now() + cacheMs, items };

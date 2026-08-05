@@ -8,6 +8,8 @@ const hiretrack_eqlist_lookup_1 = require("../services/hiretrack-eqlist-lookup")
 const hiretrack_repair_create_1 = require("../services/hiretrack-repair-create");
 const hiretrack_equipment_lookup_1 = require("../services/hiretrack-equipment-lookup");
 const hiretrack_stocktake_history_1 = require("../services/hiretrack-stocktake-history");
+const hiretrack_equipment_catalog_1 = require("../services/hiretrack-equipment-catalog");
+const hiretrack_equipment_note_write_1 = require("../services/hiretrack-equipment-note-write");
 const stocktake_problem_pdf_1 = require("../services/stocktake-problem-pdf");
 const ticket_store_1 = require("../services/ticket-store");
 const ticketStatusSchema = zod_1.z.enum([
@@ -85,6 +87,21 @@ const eqlistLookupSchema = zod_1.z.object({
 const stocktakeHistorySchema = zod_1.z.object({
     sessionState: zod_1.z.enum(['all', 'active', 'inactive']).optional(),
     limit: zod_1.z.coerce.number().int().min(1).max(50000).optional(),
+});
+const equipmentNoteLineSchema = zod_1.z.object({
+    eqtype: zod_1.z.coerce.number().int().positive(),
+    qty: zod_1.z.coerce.number().positive(),
+    priceEach: zod_1.z.coerce.number().optional(),
+});
+const equipmentNoteCreateSchema = zod_1.z.object({
+    title: zod_1.z.string().min(1).max(50),
+    user: zod_1.z.coerce.number().int().optional(),
+    site: zod_1.z.coerce.number().int().optional(),
+    currency: zod_1.z.coerce.number().int().optional(),
+    priceScheme: zod_1.z.coerce.number().int().optional(),
+    clientName: zod_1.z.string().max(255).optional(),
+    clientId: zod_1.z.coerce.number().int().optional(),
+    lines: zod_1.z.array(equipmentNoteLineSchema).min(1).max(500),
 });
 const stocktakeProblemPdfSchema = zod_1.z.object({
     latestSession: zod_1.z.string().max(500),
@@ -360,6 +377,38 @@ exports.ticketsRouter.get('/lookups/stocktake-history', async (req, res) => {
         return res.status(502).json({
             ok: false,
             error: error instanceof Error ? error.message : 'HireTrack stock-take history lookup failed',
+        });
+    }
+});
+exports.ticketsRouter.get('/lookups/equipment-catalog', async (_req, res) => {
+    try {
+        const items = await (0, hiretrack_equipment_catalog_1.getEquipmentCatalog)();
+        return res.json({ ok: true, items });
+    }
+    catch (error) {
+        return res.status(502).json({
+            ok: false,
+            error: error instanceof Error ? error.message : 'HireTrack equipment catalog lookup failed',
+        });
+    }
+});
+exports.ticketsRouter.post('/lookups/equipment-notes', async (req, res) => {
+    const parsed = equipmentNoteCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+        return res.status(400).json({
+            ok: false,
+            error: 'Validation failed',
+            issues: parsed.error.flatten(),
+        });
+    }
+    try {
+        const result = await (0, hiretrack_equipment_note_write_1.createEquipmentNoteWithLines)(parsed.data);
+        return res.json({ ok: true, ...result });
+    }
+    catch (error) {
+        return res.status(502).json({
+            ok: false,
+            error: error instanceof Error ? error.message : 'HireTrack note creation failed',
         });
     }
 });

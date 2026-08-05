@@ -99,6 +99,7 @@ function Write-ServiceConfig([string]$NodePath, [string]$PythonPath) {
   <env name="HIRETRACK_ODBC_TIMEOUT_MS" value="90000" />
   <env name="HIRETRACK_ODBC_QUERY_TIMEOUT" value="60" />
   <env name="STOCKTAKE_ODBC_CACHE_MS" value="30000" />
+  <env name="HIRETRACK_WRITE_ODBC_DSN" value="Claude" />
   <logpath>%BASE%\logs</logpath>
   <log mode="roll-by-size">
     <sizeThreshold>10240</sizeThreshold>

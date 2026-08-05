@@ -1,6 +1,7 @@
 node_modules/
 logs/
 tmp/
+/data/
 /HireTrackStocktakes.exe
 /HireTrackStocktakes.xml
 

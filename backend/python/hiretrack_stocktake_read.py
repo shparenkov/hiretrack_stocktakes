@@ -66,6 +66,50 @@ STOCKTAKE_HISTORY_QUERY = """
     ORDER BY ST.StartDate DESC, ST.IDX DESC, H.Description, I.SerialNo
 """
 
+# Equipment catalog (Hetype) read path. Deliberately excludes Hetype.xManufacturer
+# and Hetype.MPN: in this HireTrack setup those fields record the supplier /
+# where the item was purchased, not the equipment's actual brand/model.
+# See EQUIPMENT_CATALOG_MATCH_BLUEPRINT.md before changing this query.
+EQUIPMENT_CATALOG_BASE_QUERY = """
+    SELECT
+        H."Type" AS EquipmentTypeId,
+        H."Description" AS EquipmentName,
+        H."Shortcode" AS Shortcode,
+        H."Comments" AS Comments,
+        H."LongDescription" AS LongDescription,
+        H."Class" AS Class,
+        H."Visibility" AS Visibility,
+        C."Category" AS CategoryId,
+        C."Description" AS CategoryName
+    FROM "Hetype" H
+    LEFT JOIN "category" C ON C."Category" = H."Category"
+"""
+
+EQUIPMENT_CATALOG_BY_IDS_QUERY = EQUIPMENT_CATALOG_BASE_QUERY + """
+    WHERE H."Type" IN ({id_placeholders})
+"""
+
+# Lookups_LOG is populated by trigger trHeType_LOG on every insert/update/delete
+# of HeType (ActionID 0=insert, 1=update, 2=delete). This is the cheap, indexed
+# change feed the catalog sync relies on so a 7000+ row full re-query never has
+# to run on a normal refresh cycle.
+EQUIPMENT_CATALOG_CHANGES_QUERY = """
+    SELECT L."MasterID" AS EquipmentTypeId, L."ActionID" AS ActionId, L."EditDate" AS EditDate
+    FROM "Lookups_LOG" L
+    WHERE L."TableName" = 'HeType' AND L."EditDate" > ?
+    ORDER BY L."EditDate"
+"""
+
+EQUIPMENT_CATALOG_WATERMARK_QUERY = """
+    SELECT MAX(L."EditDate") AS SyncedAt
+    FROM "Lookups_LOG" L
+    WHERE L."TableName" = 'HeType'
+"""
+
+# Used only if Lookups_LOG somehow has no HeType rows yet (shouldn't happen in
+# practice) so the first delta call still has a lower bound to compare against.
+FALLBACK_WATERMARK = "1900-01-01 00:00:00"
+
 
 def serialize(value):
     if isinstance(value, (datetime, date)):
@@ -94,10 +138,75 @@ def read_stocktake_history(cursor):
     return rows_as_dicts(cursor)
 
 
+def read_equipment_catalog_watermark(cursor):
+    cursor.execute(EQUIPMENT_CATALOG_WATERMARK_QUERY)
+    row = cursor.fetchone()
+    watermark = row[0] if row else None
+    return serialize(watermark) if watermark is not None else FALLBACK_WATERMARK
+
+
+def read_equipment_catalog_full(cursor):
+    # Watermark is taken from Lookups_LOG *before* running the (slow) full
+    # join, so any change that lands mid-query is still picked up by the very
+    # next delta call instead of being silently missed.
+    watermark = read_equipment_catalog_watermark(cursor)
+    cursor.execute(EQUIPMENT_CATALOG_BASE_QUERY)
+    items = rows_as_dicts(cursor)
+    return {"items": items, "syncedAt": watermark}
+
+
+def read_equipment_catalog_changes(cursor, since):
+    if not since:
+        raise ValueError("equipment-catalog-changes requires a 'since' timestamp")
+
+    since_dt = datetime.fromisoformat(str(since))
+    cursor.execute(EQUIPMENT_CATALOG_CHANGES_QUERY, since_dt)
+    changes = rows_as_dicts(cursor)
+    if not changes:
+        return {"updated": [], "deletedIds": [], "syncedAt": since}
+
+    # Walk changes in EditDate order so the *last* action per Type wins, then
+    # resolve inserts/updates to fresh rows and deletes to bare IDs.
+    latest_edit_date = since
+    last_action_by_id = {}
+    for row in changes:
+        type_id = row.get("EquipmentTypeId")
+        if type_id is None:
+            continue
+        last_action_by_id[type_id] = row.get("ActionId")
+        edit_date = row.get("EditDate")
+        if edit_date and edit_date > latest_edit_date:
+            latest_edit_date = edit_date
+
+    updated_ids = sorted(
+        type_id for type_id, action in last_action_by_id.items() if action in (0, 1)
+    )
+    deleted_ids = set(
+        type_id for type_id, action in last_action_by_id.items() if action == 2
+    )
+
+    updated_items = []
+    if updated_ids:
+        query = EQUIPMENT_CATALOG_BY_IDS_QUERY.format(
+            id_placeholders=", ".join("?" for _ in updated_ids)
+        )
+        cursor.execute(query, *updated_ids)
+        updated_items = rows_as_dicts(cursor)
+        returned_ids = {item["EquipmentTypeId"] for item in updated_items}
+        # An ID whose last logged action was insert/update but that no longer
+        # exists was deleted after that log row was written - treat as deleted.
+        deleted_ids.update(set(updated_ids) - returned_ids)
+
+    return {
+        "updated": updated_items,
+        "deletedIds": sorted(deleted_ids),
+        "syncedAt": latest_edit_date,
+    }
+
+
 def main():
     request = json.load(sys.stdin)
-    if request.get("operation") != "stocktake-history":
-        raise ValueError("Unsupported HireTrack read operation")
+    operation = request.get("operation")
 
     connection = pyodbc.connect(
         f"DSN={DSN};Timeout={QUERY_TIMEOUT * 1000};",
@@ -105,7 +214,15 @@ def main():
         autocommit=True,
     )
     try:
-        result = read_stocktake_history(connection.cursor())
+        cursor = connection.cursor()
+        if operation == "stocktake-history":
+            result = read_stocktake_history(cursor)
+        elif operation == "equipment-catalog-full":
+            result = read_equipment_catalog_full(cursor)
+        elif operation == "equipment-catalog-changes":
+            result = read_equipment_catalog_changes(cursor, request.get("since"))
+        else:
+            raise ValueError(f"Unsupported HireTrack read operation: {operation}")
         json.dump({"ok": True, "result": result}, sys.stdout, ensure_ascii=False)
     finally:
         connection.close()

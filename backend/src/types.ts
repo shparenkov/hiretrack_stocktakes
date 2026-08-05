@@ -127,6 +127,18 @@ export interface TicketActivityRecord {
   createdAt: string;
 }
 
+export interface HiretrackEquipmentCatalogItem {
+  typeId: number;
+  name: string | null;
+  categoryId: number | null;
+  categoryName: string | null;
+  shortcode: string | null;
+  comments: string | null;
+  longDescription: string | null;
+  class: number | null;
+  visibility: number | null;
+}
+
 export interface HiretrackEqlistLookupRecord {
   eqlistId: number;
   eqlistName: string | null;
