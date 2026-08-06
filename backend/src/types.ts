@@ -134,6 +134,12 @@ export interface HiretrackEquipmentAccessory {
   required: boolean;
 }
 
+export interface HiretrackEquipmentComponent {
+  componentTypeId: number;
+  componentName: string | null;
+  quantity: number;
+}
+
 export interface HiretrackEquipmentCatalogItem {
   typeId: number;
   name: string | null;
@@ -150,6 +156,8 @@ export interface HiretrackEquipmentCatalogItem {
   similarGroupId: number | null;
   similarGroupName: string | null;
   accessories: HiretrackEquipmentAccessory[];
+  /** Composite Kit "recipe" (COMPOSIT table) - only non-empty when equipmentType > 0 */
+  components: HiretrackEquipmentComponent[];
 }
 
 export interface HiretrackEqlistLookupRecord {

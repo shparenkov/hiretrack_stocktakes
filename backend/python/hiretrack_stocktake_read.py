@@ -121,6 +121,25 @@ EQUIPMENT_RELATED_BY_MASTER_IDS_QUERY = EQUIPMENT_RELATED_QUERY + """
     WHERE R."Mastertype" IN ({id_placeholders})
 """
 
+# Composite Kit "recipe" (what a Composite/Alias Hetype actually expands to).
+# Confirmed live: Type 33 "Zildjian A Custom 14\" Hi-Hats" -> 1x Bottom(21) +
+# 1x Top(22), matching the NX client's own "Composite Definition" tab. Same
+# Lookups_LOG caveat as `related`: not covered by the change feed, so a delta
+# sync only re-fetches this for master types whose own Hetype row changed.
+EQUIPMENT_COMPOSIT_QUERY = """
+    SELECT
+        C."Mastertype" AS MasterTypeId,
+        C."Componenttype" AS ComponentTypeId,
+        H2."Description" AS ComponentName,
+        C."Quantity" AS Quantity
+    FROM "COMPOSIT" C
+    INNER JOIN "Hetype" H2 ON H2."Type" = C."Componenttype"
+"""
+
+EQUIPMENT_COMPOSIT_BY_MASTER_IDS_QUERY = EQUIPMENT_COMPOSIT_QUERY + """
+    WHERE C."Mastertype" IN ({id_placeholders})
+"""
+
 # Lookups_LOG is populated by trigger trHeType_LOG on every insert/update/delete
 # of HeType (ActionID 0=insert, 1=update, 2=delete). This is the cheap, indexed
 # change feed the catalog sync relies on so a 7000+ row full re-query never has
@@ -188,7 +207,15 @@ def read_equipment_catalog_full(cursor):
     cursor.execute(EQUIPMENT_RELATED_QUERY)
     accessories = rows_as_dicts(cursor)
 
-    return {"items": items, "accessories": accessories, "syncedAt": watermark}
+    cursor.execute(EQUIPMENT_COMPOSIT_QUERY)
+    components = rows_as_dicts(cursor)
+
+    return {
+        "items": items,
+        "accessories": accessories,
+        "components": components,
+        "syncedAt": watermark,
+    }
 
 
 def read_equipment_catalog_changes(cursor, since):
@@ -199,7 +226,7 @@ def read_equipment_catalog_changes(cursor, since):
     cursor.execute(EQUIPMENT_CATALOG_CHANGES_QUERY, since_dt)
     changes = rows_as_dicts(cursor)
     if not changes:
-        return {"updated": [], "deletedIds": [], "syncedAt": since}
+        return {"updated": [], "accessories": [], "components": [], "deletedIds": [], "syncedAt": since}
 
     # Walk changes in EditDate order so the *last* action per Type wins, then
     # resolve inserts/updates to fresh rows and deletes to bare IDs.
@@ -223,6 +250,7 @@ def read_equipment_catalog_changes(cursor, since):
 
     updated_items = []
     accessories = []
+    components = []
     if updated_ids:
         query = EQUIPMENT_CATALOG_BY_IDS_QUERY.format(
             id_placeholders=", ".join("?" for _ in updated_ids)
@@ -240,9 +268,16 @@ def read_equipment_catalog_changes(cursor, since):
         cursor.execute(rel_query, *updated_ids)
         accessories = rows_as_dicts(cursor)
 
+        comp_query = EQUIPMENT_COMPOSIT_BY_MASTER_IDS_QUERY.format(
+            id_placeholders=", ".join("?" for _ in updated_ids)
+        )
+        cursor.execute(comp_query, *updated_ids)
+        components = rows_as_dicts(cursor)
+
     return {
         "updated": updated_items,
         "accessories": accessories,
+        "components": components,
         "deletedIds": sorted(deleted_ids),
         "syncedAt": latest_edit_date,
     }

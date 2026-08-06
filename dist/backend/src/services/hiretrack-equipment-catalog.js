@@ -42,6 +42,7 @@ function mapRawItem(row) {
         similarGroupId: normalizeInt(row.SimilarGroupId),
         similarGroupName: normalizeString(row.SimilarGroupName),
         accessories: [],
+        components: [],
     };
 }
 function applyAccessories(map, rows) {
@@ -64,6 +65,31 @@ function applyAccessories(map, rows) {
         const item = map.get(masterTypeId);
         if (item)
             item.accessories = accessories;
+    }
+}
+// Composite Kit "recipe" (COMPOSIT table) - what a Composite/Alias Hetype
+// actually expands to, e.g. a hi-hat pair type -> 1x Top + 1x Bottom. Same
+// Lookups_LOG caveat as accessories: only re-fetched for master types whose
+// own Hetype row changed.
+function applyComponents(map, rows) {
+    const grouped = new Map();
+    for (const row of rows) {
+        const masterTypeId = normalizeInt(row.MasterTypeId);
+        const componentTypeId = normalizeInt(row.ComponentTypeId);
+        if (masterTypeId == null || componentTypeId == null)
+            continue;
+        const list = grouped.get(masterTypeId) || [];
+        list.push({
+            componentTypeId,
+            componentName: normalizeString(row.ComponentName),
+            quantity: normalizeInt(row.Quantity) ?? 1,
+        });
+        grouped.set(masterTypeId, list);
+    }
+    for (const [masterTypeId, components] of grouped) {
+        const item = map.get(masterTypeId);
+        if (item)
+            item.components = components;
     }
 }
 function resolveSnapshotPath() {
@@ -120,6 +146,7 @@ async function runFullSync() {
             map.set(item.typeId, item);
     }
     applyAccessories(map, result.accessories);
+    applyComponents(map, result.components);
     catalogMap = map;
     lastSyncAt = result.syncedAt;
     lastRefreshCheckAt = Date.now();
@@ -139,6 +166,7 @@ async function runDeltaSync() {
             catalogMap.set(item.typeId, item);
     }
     applyAccessories(catalogMap, result.accessories);
+    applyComponents(catalogMap, result.components);
     for (const typeId of result.deletedIds) {
         catalogMap.delete(typeId);
     }
