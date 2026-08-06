@@ -70,6 +70,12 @@ STOCKTAKE_HISTORY_QUERY = """
 # and Hetype.MPN: in this HireTrack setup those fields record the supplier /
 # where the item was purchased, not the equipment's actual brand/model.
 # See EQUIPMENT_CATALOG_MATCH_BLUEPRINT.md before changing this query.
+#
+# EquipmentType (TEquipmentType: etSimple/etCompositeKit/etAliasKit/
+# etPricedAliasKit/etMarkup) and the Similars join (a curated ~48-category
+# functional taxonomy - "vocal mic", "DI box", "crash cymbal", etc.) are for
+# rider matching to prefer over raw text similarity. See the "Similars
+# taxonomy + Composite/Alias kit awareness" section of the blueprint doc.
 EQUIPMENT_CATALOG_BASE_QUERY = """
     SELECT
         H."Type" AS EquipmentTypeId,
@@ -79,14 +85,40 @@ EQUIPMENT_CATALOG_BASE_QUERY = """
         H."LongDescription" AS LongDescription,
         CAST(H."Class" AS SMALLINT) AS Class,
         CAST(H."Visibility" AS SMALLINT) AS Visibility,
+        CAST(H."EquipmentType" AS SMALLINT) AS EquipmentType,
+        H."xSimilar" AS SimilarGroupId,
+        SIM."Name" AS SimilarGroupName,
         C."Category" AS CategoryId,
         C."Description" AS CategoryName
     FROM "Hetype" H
     LEFT JOIN "category" C ON C."Category" = H."Category"
+    LEFT JOIN "Similars" SIM ON SIM."IDX" = H."xSimilar"
 """
 
 EQUIPMENT_CATALOG_BY_IDS_QUERY = EQUIPMENT_CATALOG_BASE_QUERY + """
     WHERE H."Type" IN ({id_placeholders})
+"""
+
+# Optional/mandatory accessory relationships (e.g. Yamaha CL5 -> iPad,
+# optional; a speaker -> its mounting hardware, optional). Required=TRUE
+# rows are mandatory accessories. NOTE: this table isn't covered by
+# Lookups_LOG, so a delta sync only re-fetches accessories for master types
+# whose *own* Hetype row changed - editing only a `related` row without
+# touching its master Hetype won't be picked up until a full resync. Known
+# limitation, acceptable for now given how rarely these change.
+EQUIPMENT_RELATED_QUERY = """
+    SELECT
+        R."Mastertype" AS MasterTypeId,
+        R."Subtype" AS SubtypeId,
+        H2."Description" AS SubtypeName,
+        R."Quantity" AS Quantity,
+        R."Required" AS Required
+    FROM "related" R
+    INNER JOIN "Hetype" H2 ON H2."Type" = R."Subtype"
+"""
+
+EQUIPMENT_RELATED_BY_MASTER_IDS_QUERY = EQUIPMENT_RELATED_QUERY + """
+    WHERE R."Mastertype" IN ({id_placeholders})
 """
 
 # Lookups_LOG is populated by trigger trHeType_LOG on every insert/update/delete
@@ -152,7 +184,11 @@ def read_equipment_catalog_full(cursor):
     watermark = read_equipment_catalog_watermark(cursor)
     cursor.execute(EQUIPMENT_CATALOG_BASE_QUERY)
     items = rows_as_dicts(cursor)
-    return {"items": items, "syncedAt": watermark}
+
+    cursor.execute(EQUIPMENT_RELATED_QUERY)
+    accessories = rows_as_dicts(cursor)
+
+    return {"items": items, "accessories": accessories, "syncedAt": watermark}
 
 
 def read_equipment_catalog_changes(cursor, since):
@@ -186,6 +222,7 @@ def read_equipment_catalog_changes(cursor, since):
     )
 
     updated_items = []
+    accessories = []
     if updated_ids:
         query = EQUIPMENT_CATALOG_BY_IDS_QUERY.format(
             id_placeholders=", ".join("?" for _ in updated_ids)
@@ -197,8 +234,15 @@ def read_equipment_catalog_changes(cursor, since):
         # exists was deleted after that log row was written - treat as deleted.
         deleted_ids.update(set(updated_ids) - returned_ids)
 
+        rel_query = EQUIPMENT_RELATED_BY_MASTER_IDS_QUERY.format(
+            id_placeholders=", ".join("?" for _ in updated_ids)
+        )
+        cursor.execute(rel_query, *updated_ids)
+        accessories = rows_as_dicts(cursor)
+
     return {
         "updated": updated_items,
+        "accessories": accessories,
         "deletedIds": sorted(deleted_ids),
         "syncedAt": latest_edit_date,
     }

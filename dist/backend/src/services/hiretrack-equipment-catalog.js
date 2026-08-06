@@ -33,7 +33,38 @@ function mapRawItem(row) {
         longDescription: normalizeString(row.LongDescription),
         class: normalizeInt(row.Class),
         visibility: normalizeInt(row.Visibility),
+        // TEquipmentType: 0=etSimple, 1=etCompositeKit, 2=etAliasKit,
+        // 3=etPricedAliasKit, 4=etMarkup - prefer an existing Composite/Alias kit
+        // over hand-assembling components when one fits a rider line.
+        equipmentType: normalizeInt(row.EquipmentType),
+        // Similars = curated functional taxonomy ("vocal mic", "DI box", "crash
+        // cymbal", ...) - match rider text against this before raw item names.
+        similarGroupId: normalizeInt(row.SimilarGroupId),
+        similarGroupName: normalizeString(row.SimilarGroupName),
+        accessories: [],
     };
+}
+function applyAccessories(map, rows) {
+    const grouped = new Map();
+    for (const row of rows) {
+        const masterTypeId = normalizeInt(row.MasterTypeId);
+        const subtypeId = normalizeInt(row.SubtypeId);
+        if (masterTypeId == null || subtypeId == null)
+            continue;
+        const list = grouped.get(masterTypeId) || [];
+        list.push({
+            subtypeId,
+            subtypeName: normalizeString(row.SubtypeName),
+            quantity: normalizeInt(row.Quantity) ?? 1,
+            required: Boolean(row.Required),
+        });
+        grouped.set(masterTypeId, list);
+    }
+    for (const [masterTypeId, accessories] of grouped) {
+        const item = map.get(masterTypeId);
+        if (item)
+            item.accessories = accessories;
+    }
 }
 function resolveSnapshotPath() {
     const configured = process.env.EQUIPMENT_CATALOG_SNAPSHOT_PATH?.trim();
@@ -88,6 +119,7 @@ async function runFullSync() {
         if (item)
             map.set(item.typeId, item);
     }
+    applyAccessories(map, result.accessories);
     catalogMap = map;
     lastSyncAt = result.syncedAt;
     lastRefreshCheckAt = Date.now();
@@ -106,6 +138,7 @@ async function runDeltaSync() {
         if (item)
             catalogMap.set(item.typeId, item);
     }
+    applyAccessories(catalogMap, result.accessories);
     for (const typeId of result.deletedIds) {
         catalogMap.delete(typeId);
     }

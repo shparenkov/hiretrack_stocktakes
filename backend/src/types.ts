@@ -127,6 +127,13 @@ export interface TicketActivityRecord {
   createdAt: string;
 }
 
+export interface HiretrackEquipmentAccessory {
+  subtypeId: number;
+  subtypeName: string | null;
+  quantity: number;
+  required: boolean;
+}
+
 export interface HiretrackEquipmentCatalogItem {
   typeId: number;
   name: string | null;
@@ -137,6 +144,12 @@ export interface HiretrackEquipmentCatalogItem {
   longDescription: string | null;
   class: number | null;
   visibility: number | null;
+  /** TEquipmentType: 0=etSimple, 1=etCompositeKit, 2=etAliasKit, 3=etPricedAliasKit, 4=etMarkup */
+  equipmentType: number | null;
+  /** Similars group (curated functional taxonomy, e.g. "vocal mic", "DI box") */
+  similarGroupId: number | null;
+  similarGroupName: string | null;
+  accessories: HiretrackEquipmentAccessory[];
 }
 
 export interface HiretrackEqlistLookupRecord {

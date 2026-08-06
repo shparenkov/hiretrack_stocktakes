@@ -18,17 +18,30 @@ interface RawEquipmentCatalogRow {
   LongDescription: string | null;
   Class: number | null;
   Visibility: number | null;
+  EquipmentType: number | null;
+  SimilarGroupId: number | null;
+  SimilarGroupName: string | null;
   CategoryId: number | null;
   CategoryName: string | null;
 }
 
+interface RawAccessoryRow {
+  MasterTypeId: number;
+  SubtypeId: number;
+  SubtypeName: string | null;
+  Quantity: number | null;
+  Required: boolean | null;
+}
+
 interface EquipmentCatalogFullResult {
   items: RawEquipmentCatalogRow[];
+  accessories: RawAccessoryRow[];
   syncedAt: string;
 }
 
 interface EquipmentCatalogChangesResult {
   updated: RawEquipmentCatalogRow[];
+  accessories: RawAccessoryRow[];
   deletedIds: number[];
   syncedAt: string;
 }
@@ -63,7 +76,40 @@ function mapRawItem(row: RawEquipmentCatalogRow): HiretrackEquipmentCatalogItem 
     longDescription: normalizeString(row.LongDescription),
     class: normalizeInt(row.Class),
     visibility: normalizeInt(row.Visibility),
+    // TEquipmentType: 0=etSimple, 1=etCompositeKit, 2=etAliasKit,
+    // 3=etPricedAliasKit, 4=etMarkup - prefer an existing Composite/Alias kit
+    // over hand-assembling components when one fits a rider line.
+    equipmentType: normalizeInt(row.EquipmentType),
+    // Similars = curated functional taxonomy ("vocal mic", "DI box", "crash
+    // cymbal", ...) - match rider text against this before raw item names.
+    similarGroupId: normalizeInt(row.SimilarGroupId),
+    similarGroupName: normalizeString(row.SimilarGroupName),
+    accessories: [],
   };
+}
+
+function applyAccessories(
+  map: Map<number, HiretrackEquipmentCatalogItem>,
+  rows: RawAccessoryRow[],
+): void {
+  const grouped = new Map<number, HiretrackEquipmentCatalogItem['accessories']>();
+  for (const row of rows) {
+    const masterTypeId = normalizeInt(row.MasterTypeId);
+    const subtypeId = normalizeInt(row.SubtypeId);
+    if (masterTypeId == null || subtypeId == null) continue;
+    const list = grouped.get(masterTypeId) || [];
+    list.push({
+      subtypeId,
+      subtypeName: normalizeString(row.SubtypeName),
+      quantity: normalizeInt(row.Quantity) ?? 1,
+      required: Boolean(row.Required),
+    });
+    grouped.set(masterTypeId, list);
+  }
+  for (const [masterTypeId, accessories] of grouped) {
+    const item = map.get(masterTypeId);
+    if (item) item.accessories = accessories;
+  }
 }
 
 function resolveSnapshotPath(): string {
@@ -120,6 +166,7 @@ async function runFullSync(): Promise<void> {
     const item = mapRawItem(row);
     if (item) map.set(item.typeId, item);
   }
+  applyAccessories(map, result.accessories);
   catalogMap = map;
   lastSyncAt = result.syncedAt;
   lastRefreshCheckAt = Date.now();
@@ -138,6 +185,7 @@ async function runDeltaSync(): Promise<void> {
     const item = mapRawItem(row);
     if (item) catalogMap.set(item.typeId, item);
   }
+  applyAccessories(catalogMap, result.accessories);
   for (const typeId of result.deletedIds) {
     catalogMap.delete(typeId);
   }
