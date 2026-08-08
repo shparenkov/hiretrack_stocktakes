@@ -82,6 +82,16 @@ body { height: 100vh; display: flex; flex-direction: column; }
   border-bottom: 1px solid var(--border);
   min-height: 34px;
   align-items: stretch;
+  /* A block-level grid container's width:auto fills its parent, not its own
+     grid tracks - with enough day columns to exceed the viewport, cells
+     overflowed past the row's own (too-narrow) box while still rendering
+     individually (why vertical gridlines survived), but border-bottom is
+     bound to that box and stopped short (why horizontal lines vanished
+     partway across). width:max-content makes the row size to its actual
+     content so .gantt-scroll's overflow:auto scrolls the whole thing
+     properly. */
+  width: max-content;
+  min-width: 100%;
 }
 .row.header { min-height: 44px; }
 
