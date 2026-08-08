@@ -10,6 +10,12 @@ Current status:
 - `prisma` store mode is prepared for DB-backed switch
 - StockCheck history reads directly from HireTrack through the read-only 32-bit `pyodbc` DSN
 - stock-take responses are cached for 30 seconds and concurrent reads share one ODBC query
+- Crew Bookings (`/crew-bookings/`) is a Job -> Phase -> Position crewing page with a
+  write-back "Подтвердить" step, ported from the standalone `Hiretrack_crew_bookings`
+  prototype. Uses its own read/write bridge pair (`hiretrack_crew_read.py` /
+  `hiretrack_crew_write.py`, `CREW_ODBC_DSN` / `CREW_WRITE_ODBC_DSN`) so it can point at
+  TestDB (`Claude Test`) while the write path is still being validated, independent of
+  the equipment-note write DSN above
 
 Reference docs:
 

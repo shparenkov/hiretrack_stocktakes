@@ -1,6 +1,8 @@
 import cors from 'cors';
 import express from 'express';
 import fs from 'fs';
+import path from 'path';
+import { crewBookingsRouter } from './routes/crew-bookings';
 import { ticketsRouter } from './routes/tickets';
 import {
   renderBitrixTicketsAppShell,
@@ -40,6 +42,13 @@ export function createApp() {
 
   app.use('/tickets', ticketsRouter);
   app.use('/api/tickets', ticketsRouter);
+  app.use('/api/crew-bookings', crewBookingsRouter);
+
+  const crewBookingsFrontendPath = path.resolve(process.cwd(), 'frontend-crew-bookings');
+  app.get('/crew-bookings/', (_req, res) => {
+    res.sendFile(path.join(crewBookingsFrontendPath, 'index.html'));
+  });
+  app.use('/crew-bookings', express.static(crewBookingsFrontendPath, { index: false, redirect: false }));
 
   app.all(['/bitrix/tickets/app', '/bitrix/tickets/install'], (_req, res) => {
     const uiPath = '/bitrix/tickets/ui/';

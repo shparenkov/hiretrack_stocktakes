@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <title>Crew Bookings — HireTrack NX</title>
+  <link rel="stylesheet" href="styles.css?v=1" />
+</head>
+<body>
+  <div class="toolbar">
+    <h1>Crew Bookings — незанятый персонал</h1>
+    <span class="hint">Клик по +/− раскрывает Job → Фаза → Позиция</span>
+    <button id="expand-all">Развернуть всё</button>
+    <button id="collapse-all">Свернуть всё</button>
+    <button id="refresh-data" title="Перечитать данные из HireTrack">Обновить</button>
+  </div>
+  <div class="toolbar toolbar-window">
+    <label class="window-field">Начальная дата
+      <span class="window-field-row">
+        <input type="date" id="window-start" />
+        <span id="window-start-display" class="date-display"></span>
+      </span>
+    </label>
+    <button id="window-today">Сегодня</button>
+    <span class="window-presets">
+      <button class="preset-btn" data-days="3">3д</button>
+      <button class="preset-btn" data-days="7">7д</button>
+      <button class="preset-btn" data-days="14">14д</button>
+      <button class="preset-btn" data-days="30">30д</button>
+    </span>
+    <label class="window-field">Свой период
+      <input type="number" id="window-custom" min="1" max="180" step="1" />
+    </label>
+    <button id="window-apply-custom">Применить</button>
+  </div>
+  <div class="toolbar toolbar-filters">
+    <label class="window-field">Статус
+      <span class="window-field-row">
+        <span class="ge-label">&gt;=</span>
+        <select id="status-filter">
+          <option value="1">Запрос</option>
+          <option value="2">Бронь</option>
+          <option value="3">Подтверждено и выше</option>
+        </select>
+      </span>
+    </label>
+    <label class="window-field">Группировка
+      <select id="group-by">
+        <option value="none">Без группировки</option>
+        <option value="id">Job Reference</option>
+        <option value="name">Job Title</option>
+        <option value="jobType">Job Type</option>
+        <option value="venue">Main Venue</option>
+        <option value="client">Client</option>
+        <option value="start">Job/Crewing Start Date</option>
+      </select>
+    </label>
+  </div>
+  <div id="load-status" class="load-status">Загрузка данных из HireTrack…</div>
+  <div class="gantt-scroll">
+    <div id="gantt"></div>
+  </div>
+  <datalist id="crew-list"></datalist>
+  <script src="app.js?v=1"></script>
+</body>
+</html>
