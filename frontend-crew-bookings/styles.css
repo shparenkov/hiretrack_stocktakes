@@ -1,6 +1,6 @@
 :root {
   --left-toggle: 30px;
-  --left-job: 200px;
+  --left-job: 260px;
   --left-name: 320px;
   --left-crew: 130px;
   --day-w: 100px;
@@ -192,7 +192,10 @@ button.toggle-btn:hover { background: var(--bg-alt); }
 .row.position-header .cell { background: #eef0f5; font-weight: 700; font-size: 12px; color: #444; }
 
 .row.position .cell { background: #fff; font-weight: 400; }
-.role-name { overflow: hidden; text-overflow: ellipsis; }
+/* Wrap instead of ellipsis so long role names are always fully readable -
+   the grid row auto-grows to fit since .row uses min-height, not a fixed
+   height. */
+.role-name { overflow: visible; text-overflow: initial; white-space: normal; line-height: 1.25; padding: 4px 8px; }
 .position-description { color: var(--muted); font-size: 12px; }
 
 /* Explicit class instead of :has() — :has() support is inconsistent enough
@@ -239,3 +242,18 @@ button.toggle-btn:hover { background: var(--bg-alt); }
 .day-qty.q3 { background: #e46e6e; color: #fff; }
 .day-qty.q4 { background: #d93b3b; color: #fff; }
 .day-qty.assigned { background: #a9dcae; border-right: 1px solid #eafbea; }
+
+/* position:fixed + attached to <body> - floats above the sticky/scrolling
+   grid regardless of any ancestor's overflow:hidden clipping. */
+.assignee-dropdown {
+  position: fixed;
+  z-index: 1000;
+  background: #fff;
+  border: 1px solid #7a828c;
+  max-height: 220px;
+  overflow-y: auto;
+  font-size: 12px;
+}
+.assignee-dropdown-item { padding: 5px 8px; cursor: pointer; }
+.assignee-dropdown-item:hover { background: var(--purple-light); }
+.assignee-dropdown-empty { padding: 5px 8px; color: var(--muted); font-style: italic; }

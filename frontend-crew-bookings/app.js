@@ -15,8 +15,17 @@ let DAY_COUNT = 14;
 function daysBetween(a, b) {
   return Math.round((new Date(b) - new Date(a)) / 86400000);
 }
+// Local calendar date, NOT toISOString().slice(0,10) - toISOString() converts
+// to UTC first, which silently shifts every date one day back for anyone
+// east of UTC (e.g. Moscow, UTC+3: local midnight is still "yesterday" in
+// UTC). That bug showed up as every "Day N" label and the "Сегодня"
+// highlight being off by one day, even though the underlying DB data (which
+// day actually has coverage) was always correct.
 function fmt(d) {
-  return d.toISOString().slice(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 function addDays(d, n) {
   const r = new Date(d);
@@ -24,7 +33,7 @@ function addDays(d, n) {
   return r;
 }
 function todayStr() {
-  return new Date().toISOString().slice(0, 10);
+  return fmt(new Date());
 }
 
 // Top-bar window controls: pick the first visible day column and how many
@@ -57,6 +66,12 @@ const state = {
   groupBy: "none",
   assignErrors: new Map(), // key: `${jobId}::${phaseIdx}::${posIdx}` -> message
   assignPending: new Set(), // key: `${jobId}::${phaseIdx}::${posIdx}`
+  // Text typed but not yet confirmed, per position. Without this, confirming
+  // one row triggers a full re-render (to show its own pending/success
+  // state) that wipes whatever you'd started typing into any OTHER
+  // not-yet-confirmed row - this is what made "fill in several positions,
+  // only one sticks" happen.
+  pendingInput: new Map(),
 };
 
 // Group-by field accessors, keyed to match the <select id="group-by"> values.
@@ -232,9 +247,9 @@ function renderPositionRow(job, phase, position, phaseIdx, posIdx) {
         <input
           class="assignee-input"
           type="text"
-          list="crew-list"
+          autocomplete="off"
           placeholder="Unprocessed — назначить..."
-          value="${position.assignee || ""}"
+          value="${state.pendingInput.has(key) ? state.pendingInput.get(key) : (position.assignee || "")}"
           data-job="${job.id}" data-phase="${phaseIdx}" data-pos="${posIdx}"
           ${pending ? "disabled" : ""}
         />
@@ -263,6 +278,18 @@ function renderGroupHeaderRow(label) {
 }
 
 function render() {
+  // Re-rendering rebuilds the whole #gantt innerHTML, which would otherwise
+  // steal focus/cursor position (and orphan an open dropdown) away from
+  // whatever row the user is still typing into - restore it afterward.
+  const focused = document.activeElement;
+  const wasDropdownOpen = typeof activeAssigneeInput !== "undefined" && activeAssigneeInput !== null;
+  let focusedKey = null;
+  let focusedSelStart = null;
+  if (focused && focused.classList && focused.classList.contains("assignee-input")) {
+    focusedKey = `${focused.dataset.job}::${focused.dataset.phase}::${focused.dataset.pos}`;
+    focusedSelStart = focused.selectionStart;
+  }
+
   const rows = [renderHeader()];
 
   let visibleJobs = JOBS.filter((j) => (j.statusRank ?? 0) >= state.statusFilter);
@@ -293,6 +320,18 @@ function render() {
     }
   }
   document.getElementById("gantt").innerHTML = rows.join("");
+
+  if (focusedKey) {
+    const [fj, fp, fpos] = focusedKey.split("::");
+    const restored = document.querySelector(
+      `.assignee-input[data-job="${fj}"][data-phase="${fp}"][data-pos="${fpos}"]`
+    );
+    if (restored) {
+      restored.focus();
+      if (focusedSelStart != null) restored.setSelectionRange(focusedSelStart, focusedSelStart);
+      if (wasDropdownOpen) openAssigneeDropdown(restored);
+    }
+  }
 }
 
 document.getElementById("gantt").addEventListener("click", (ev) => {
@@ -319,10 +358,6 @@ document.getElementById("gantt").addEventListener("click", (ev) => {
   }
 });
 
-function renderCrewListOptions() {
-  document.getElementById("crew-list").innerHTML = CREW.map((name) => `<option value="${name}"></option>`).join("");
-}
-
 // Picking a name only fills the field — nothing is considered assigned until
 // "Подтвердить" is clicked (or Enter pressed). Confirming POSTs to
 // /api/crew-bookings/assign and only applies the change in the UI once
@@ -339,6 +374,7 @@ async function confirmAssignee(jobId, phaseIdx, posIdx, value) {
   if (!personName) {
     position.assignee = null;
     state.assignErrors.delete(key);
+    state.pendingInput.delete(key);
     render();
     return;
   }
@@ -361,6 +397,7 @@ async function confirmAssignee(jobId, phaseIdx, posIdx, value) {
     const body = await resp.json();
     if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
     position.assignee = body.assignee || personName;
+    state.pendingInput.delete(key);
   } catch (e) {
     state.assignErrors.set(key, "Не удалось назначить: " + e.message);
   } finally {
@@ -376,6 +413,73 @@ document.getElementById("gantt").addEventListener("keydown", (ev) => {
   confirmAssignee(input.dataset.job, input.dataset.phase, input.dataset.pos, input.value);
 });
 
+// Custom searchable dropdown, replacing the native <datalist> (which doesn't
+// reliably drop down its full list on click/focus across browsers, and only
+// does prefix matching, not substring search). One shared panel, positioned
+// via getBoundingClientRect and attached to <body> so it floats above the
+// sticky/scrolling grid regardless of any ancestor's overflow:hidden.
+const assigneeDropdown = document.createElement("div");
+assigneeDropdown.className = "assignee-dropdown";
+assigneeDropdown.style.display = "none";
+document.body.appendChild(assigneeDropdown);
+let activeAssigneeInput = null;
+
+function closeAssigneeDropdown() {
+  assigneeDropdown.style.display = "none";
+  activeAssigneeInput = null;
+}
+
+function positionAssigneeDropdown(input) {
+  const rect = input.getBoundingClientRect();
+  assigneeDropdown.style.left = `${rect.left}px`;
+  assigneeDropdown.style.top = `${rect.bottom}px`;
+  assigneeDropdown.style.width = `${rect.width}px`;
+}
+
+function openAssigneeDropdown(input) {
+  activeAssigneeInput = input;
+  const query = input.value.trim().toLowerCase();
+  const matches = (query ? CREW.filter((name) => name.toLowerCase().includes(query)) : CREW).slice(0, 50);
+  assigneeDropdown.innerHTML = matches.length
+    ? matches.map((name) => `<div class="assignee-dropdown-item" data-name="${name}">${name}</div>`).join("")
+    : `<div class="assignee-dropdown-empty">Никого не найдено</div>`;
+  positionAssigneeDropdown(input);
+  assigneeDropdown.style.display = "block";
+}
+
+document.getElementById("gantt").addEventListener("focusin", (ev) => {
+  const input = ev.target.closest(".assignee-input");
+  if (input) openAssigneeDropdown(input);
+});
+document.getElementById("gantt").addEventListener("input", (ev) => {
+  const input = ev.target.closest(".assignee-input");
+  if (!input) return;
+  const key = `${input.dataset.job}::${input.dataset.phase}::${input.dataset.pos}`;
+  state.pendingInput.set(key, input.value);
+  openAssigneeDropdown(input);
+});
+// mousedown (not click) + preventDefault: stops the input from blurring
+// before the selection registers, so focus/cursor never has to be restored.
+assigneeDropdown.addEventListener("mousedown", (ev) => {
+  const item = ev.target.closest(".assignee-dropdown-item");
+  if (!item || !activeAssigneeInput) return;
+  ev.preventDefault();
+  const input = activeAssigneeInput;
+  input.value = item.dataset.name;
+  const key = `${input.dataset.job}::${input.dataset.phase}::${input.dataset.pos}`;
+  state.pendingInput.set(key, input.value);
+  closeAssigneeDropdown();
+  input.focus();
+});
+document.addEventListener("mousedown", (ev) => {
+  if (ev.target.closest(".assignee-dropdown") || ev.target.closest(".assignee-input")) return;
+  closeAssigneeDropdown();
+});
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape" && activeAssigneeInput) closeAssigneeDropdown();
+});
+document.querySelector(".gantt-scroll").addEventListener("scroll", closeAssigneeDropdown);
+
 async function loadCrewData(options) {
   const forceRefresh = options && options.forceRefresh;
   const url = forceRefresh ? "/api/crew-bookings/data?refresh=1" : "/api/crew-bookings/data";
@@ -387,7 +491,6 @@ async function loadCrewData(options) {
   const data = await resp.json();
   JOBS = data.jobs.map((j) => ({ ...j, crewBoss: j.crewBoss || "Unassigned" }));
   CREW = data.crewRoster;
-  renderCrewListOptions();
 }
 
 document.getElementById("refresh-data").addEventListener("click", async () => {
