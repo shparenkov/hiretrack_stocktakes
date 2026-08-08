@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { crewBookingsRouter } from './routes/crew-bookings';
 import { ticketsRouter } from './routes/tickets';
+import { installCrewBookingsPinAuth } from './services/crew-bookings-pin-auth';
 import {
   renderBitrixTicketsAppShell,
   renderFrontendBuildMissingPage,
@@ -42,6 +43,7 @@ export function createApp() {
 
   app.use('/tickets', ticketsRouter);
   app.use('/api/tickets', ticketsRouter);
+  installCrewBookingsPinAuth(app);
   app.use('/api/crew-bookings', crewBookingsRouter);
 
   const crewBookingsFrontendPath = path.resolve(process.cwd(), 'frontend-crew-bookings');
