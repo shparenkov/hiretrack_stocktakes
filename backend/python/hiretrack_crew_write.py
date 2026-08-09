@@ -70,11 +70,19 @@ def assign_position(cursor, params):
     # before the real active NameCounter 227 - HireTrack NX's own UI doesn't
     # render archived people in this view, so the position looked empty
     # even though xPerson was technically set).
+    # NexusDB quirk confirmed live: combining a parameterized "FullName = ?"
+    # with "(Archived IS NULL OR Archived = FALSE)" in the same query raises
+    # "Type mismatch (nxtShortString <> nxtBLOB)" - the query engine
+    # misreads the FullName parameter's type once that OR/IS-NULL clause is
+    # present, even though the same OR/IS-NULL construct works fine with no
+    # parameter (see hiretrack_crew_read.py's crew_roster query) and
+    # "CREW = TRUE" alone works fine with a parameter. Filter CREW in SQL,
+    # filter Archived in Python afterward to avoid the buggy combination.
     cursor.execute(
-        "SELECT NameCounter, FullName FROM Name2 WHERE FullName = ? AND CREW = TRUE AND (Archived IS NULL OR Archived = FALSE)",
+        "SELECT NameCounter, FullName, Archived FROM Name2 WHERE FullName = ? AND CREW = TRUE",
         person_name,
     )
-    people = cursor.fetchall()
+    people = [p for p in cursor.fetchall() if not p.Archived]
     if not people:
         raise ValueError(f"No active crew Name2 row with FullName = {person_name!r}")
     person = people[0]
