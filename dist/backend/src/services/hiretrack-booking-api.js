@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.checkHiretrackAvailability = checkHiretrackAvailability;
 exports.initialiseHiretrackBooking = initialiseHiretrackBooking;
 exports.createHiretrackBooking = createHiretrackBooking;
+exports.appendLinesToExistingBooking = appendLinesToExistingBooking;
 exports.appendToHiretrackBooking = appendToHiretrackBooking;
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
@@ -272,6 +273,42 @@ async function createHiretrackBooking(input) {
         linesWritten,
         failedLines,
     };
+}
+// Adds lines to an EXISTING Eqlist (the "open an existing job" flow) - no
+// initialise_new_booking involved, since the Job/Eqlist already exist.
+// dateFrom/dateTo must be exactly the target Eqlist's own DateOut/DateBack
+// (append_to_booking rejects any mismatch with ValidationResult 6,
+// bvrBookingDatesNEQListDates - see hiretrack-job-lookup.ts, which is where
+// these dates should come from, not user-typed values).
+async function appendLinesToExistingBooking(input) {
+    if (input.lines.length === 0) {
+        throw new Error('appendLinesToExistingBooking requires at least one line.');
+    }
+    let linesWritten = 0;
+    const failedLines = [];
+    for (const line of input.lines) {
+        try {
+            await appendToHiretrackBooking({
+                typeId: line.typeId,
+                quantity: line.quantity,
+                dateFrom: input.dateFrom,
+                dateTo: input.dateTo,
+                eqlistId: input.eqlistId,
+                userId: input.userId,
+                clientId: input.clientId,
+                warehouseId: input.warehouseId,
+                pricelistId: input.pricelistId,
+            });
+            linesWritten += 1;
+        }
+        catch (error) {
+            failedLines.push({
+                typeId: line.typeId,
+                error: error instanceof Error ? error.message : 'append_to_booking failed',
+            });
+        }
+    }
+    return { linesWritten, failedLines };
 }
 async function appendToHiretrackBooking(input) {
     const config = loadHiretrackConfig();

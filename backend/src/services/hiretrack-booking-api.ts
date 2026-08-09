@@ -386,6 +386,63 @@ export async function createHiretrackBooking(input: CreateBookingInput): Promise
   };
 }
 
+export interface AppendLinesToExistingBookingInput {
+  eqlistId: number;
+  clientId: number;
+  dateFrom: string;
+  dateTo: string;
+  userId?: number;
+  warehouseId?: number;
+  pricelistId?: number;
+  lines: CreateBookingLineInput[];
+}
+
+export interface AppendLinesToExistingBookingResult {
+  linesWritten: number;
+  failedLines: { typeId: number; error: string }[];
+}
+
+// Adds lines to an EXISTING Eqlist (the "open an existing job" flow) - no
+// initialise_new_booking involved, since the Job/Eqlist already exist.
+// dateFrom/dateTo must be exactly the target Eqlist's own DateOut/DateBack
+// (append_to_booking rejects any mismatch with ValidationResult 6,
+// bvrBookingDatesNEQListDates - see hiretrack-job-lookup.ts, which is where
+// these dates should come from, not user-typed values).
+export async function appendLinesToExistingBooking(
+  input: AppendLinesToExistingBookingInput,
+): Promise<AppendLinesToExistingBookingResult> {
+  if (input.lines.length === 0) {
+    throw new Error('appendLinesToExistingBooking requires at least one line.');
+  }
+
+  let linesWritten = 0;
+  const failedLines: { typeId: number; error: string }[] = [];
+
+  for (const line of input.lines) {
+    try {
+      await appendToHiretrackBooking({
+        typeId: line.typeId,
+        quantity: line.quantity,
+        dateFrom: input.dateFrom,
+        dateTo: input.dateTo,
+        eqlistId: input.eqlistId,
+        userId: input.userId,
+        clientId: input.clientId,
+        warehouseId: input.warehouseId,
+        pricelistId: input.pricelistId,
+      });
+      linesWritten += 1;
+    } catch (error) {
+      failedLines.push({
+        typeId: line.typeId,
+        error: error instanceof Error ? error.message : 'append_to_booking failed',
+      });
+    }
+  }
+
+  return { linesWritten, failedLines };
+}
+
 export interface AppendToBookingInput {
   typeId: number;
   quantity: number;

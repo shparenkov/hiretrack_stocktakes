@@ -5,6 +5,7 @@ const express_1 = require("express");
 const zod_1 = require("zod");
 const hiretrack_equipment_catalog_1 = require("../services/hiretrack-equipment-catalog");
 const hiretrack_company_search_1 = require("../services/hiretrack-company-search");
+const hiretrack_job_lookup_1 = require("../services/hiretrack-job-lookup");
 const hiretrack_booking_api_1 = require("../services/hiretrack-booking-api");
 exports.createJobRouter = (0, express_1.Router)();
 exports.createJobRouter.get('/catalog', async (_req, res) => {
@@ -65,6 +66,40 @@ exports.createJobRouter.post('/bookings', async (req, res) => {
     }
     try {
         const result = await (0, hiretrack_booking_api_1.createHiretrackBooking)(parsed.data);
+        res.json({ ok: true, ...result });
+    }
+    catch (error) {
+        res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+});
+exports.createJobRouter.get('/jobs/:jobRef', async (req, res) => {
+    try {
+        const job = await (0, hiretrack_job_lookup_1.lookupHiretrackJob)(String(req.params.jobRef));
+        if (!job) {
+            res.status(404).json({ ok: false, error: 'Job not found' });
+            return;
+        }
+        res.json({ ok: true, job });
+    }
+    catch (error) {
+        res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+});
+const appendLinesSchema = zod_1.z.object({
+    eqlistId: zod_1.z.coerce.number().int().positive(),
+    clientId: zod_1.z.coerce.number().int().positive(),
+    dateFrom: zod_1.z.string().min(1),
+    dateTo: zod_1.z.string().min(1),
+    lines: zod_1.z.array(bookingLineSchema).min(1).max(200),
+});
+exports.createJobRouter.post('/jobs/:jobRef/lines', async (req, res) => {
+    const parsed = appendLinesSchema.safeParse(req.body);
+    if (!parsed.success) {
+        res.status(400).json({ ok: false, error: 'Validation failed', issues: parsed.error.flatten() });
+        return;
+    }
+    try {
+        const result = await (0, hiretrack_booking_api_1.appendLinesToExistingBooking)(parsed.data);
         res.json({ ok: true, ...result });
     }
     catch (error) {

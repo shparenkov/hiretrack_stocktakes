@@ -2,9 +2,11 @@ import { Request, Response, Router } from 'express';
 import { z } from 'zod';
 import { getEquipmentCatalog } from '../services/hiretrack-equipment-catalog';
 import { searchHiretrackCompanies } from '../services/hiretrack-company-search';
+import { lookupHiretrackJob } from '../services/hiretrack-job-lookup';
 import {
   checkHiretrackAvailability,
   createHiretrackBooking,
+  appendLinesToExistingBooking,
 } from '../services/hiretrack-booking-api';
 
 export const createJobRouter = Router();
@@ -70,6 +72,41 @@ createJobRouter.post('/bookings', async (req: Request, res: Response) => {
   }
   try {
     const result = await createHiretrackBooking(parsed.data);
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+createJobRouter.get('/jobs/:jobRef', async (req: Request, res: Response) => {
+  try {
+    const job = await lookupHiretrackJob(String(req.params.jobRef));
+    if (!job) {
+      res.status(404).json({ ok: false, error: 'Job not found' });
+      return;
+    }
+    res.json({ ok: true, job });
+  } catch (error) {
+    res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+const appendLinesSchema = z.object({
+  eqlistId: z.coerce.number().int().positive(),
+  clientId: z.coerce.number().int().positive(),
+  dateFrom: z.string().min(1),
+  dateTo: z.string().min(1),
+  lines: z.array(bookingLineSchema).min(1).max(200),
+});
+
+createJobRouter.post('/jobs/:jobRef/lines', async (req: Request, res: Response) => {
+  const parsed = appendLinesSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ ok: false, error: 'Validation failed', issues: parsed.error.flatten() });
+    return;
+  }
+  try {
+    const result = await appendLinesToExistingBooking(parsed.data);
     res.json({ ok: true, ...result });
   } catch (error) {
     res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });

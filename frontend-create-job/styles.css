@@ -203,6 +203,26 @@ main {
 
 .empty-hint { color: var(--muted); margin: 12px 0 0; }
 
+.mode-toggle { display: flex; gap: 10px; }
+
+.mode-btn {
+  flex: 1;
+  padding: 12px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--navy);
+  font: 700 14px Arial, sans-serif;
+  cursor: pointer;
+}
+
+.mode-btn.active { background: var(--navy); color: #fff; border-color: var(--navy); }
+
+#job-ref-search { flex: 1; }
+
+.job-loaded-info { margin-top: 14px; }
+.job-loaded-info p { margin: 0 0 8px; }
+.job-loaded-dates .hint { color: var(--muted); font-weight: 400; font-size: 12px; }
+
 .submit-card { display: flex; flex-direction: column; gap: 12px; align-items: flex-start; }
 
 #submit-btn {

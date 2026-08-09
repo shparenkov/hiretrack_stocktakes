@@ -177,6 +177,33 @@ COMPANY_SEARCH_QUERY = """
     ORDER BY "CompanyName"
 """
 
+# "Open an existing job" lookup for the create-job page - job ref -> its
+# Eqlists (each with its real DateOut/DateBack, since append_to_booking must
+# match those exactly - see EQUIPMENT_CATALOG_MATCH_BLUEPRINT.md) and their
+# current Sort lines (with Hetype names, since Sort only has Type IDs).
+# Exact match (after trimming), not case-insensitive: NexusDB's UPPER()/LOWER()
+# don't fold Cyrillic case, confirmed live, and Job_Ref is always copy-pasted
+# verbatim from HireTrack NX's own display anyway (fixed case as generated).
+JOB_LOOKUP_QUERY = """
+    SELECT "JobNo", "Job_Ref", "Name"
+    FROM "Jobs"
+    WHERE "Job_Ref" = ?
+"""
+
+JOB_LOOKUP_EQLISTS_QUERY = """
+    SELECT "Eql_no", "Eql_name", "DateOut", "DateBack", "Client_no", "Client_name"
+    FROM "Eqlists"
+    WHERE "Job_no" = ?
+"""
+
+JOB_LOOKUP_SORT_QUERY = """
+    SELECT S."Type" AS EquipmentTypeId, H."Description" AS EquipmentName, S."Quant"
+    FROM "Sort" S
+    LEFT JOIN "Hetype" H ON H."Type" = S."Type"
+    WHERE S."Eqlno" = ?
+    ORDER BY S."SortOrder"
+"""
+
 
 def serialize(value):
     if isinstance(value, (datetime, date)):
@@ -307,6 +334,28 @@ def read_company_search(cursor, query_text):
     return rows_as_dicts(cursor)
 
 
+def read_job_lookup(cursor, job_ref):
+    if not job_ref or not str(job_ref).strip():
+        raise ValueError("job-lookup requires a 'jobRef'")
+
+    cursor.execute(JOB_LOOKUP_QUERY, str(job_ref).strip())
+    job_row = cursor.fetchone()
+    if not job_row:
+        return None
+
+    job_no = job_row[0]
+    job = {"jobNo": job_no, "jobRef": job_row[1], "name": job_row[2]}
+
+    cursor.execute(JOB_LOOKUP_EQLISTS_QUERY, job_no)
+    eqlists = rows_as_dicts(cursor)
+    for eqlist in eqlists:
+        cursor.execute(JOB_LOOKUP_SORT_QUERY, eqlist["Eql_no"])
+        eqlist["lines"] = rows_as_dicts(cursor)
+
+    job["eqlists"] = eqlists
+    return job
+
+
 def main():
     request = json.load(sys.stdin)
     operation = request.get("operation")
@@ -326,6 +375,8 @@ def main():
             result = read_equipment_catalog_changes(cursor, request.get("since"))
         elif operation == "company-search":
             result = read_company_search(cursor, request.get("query"))
+        elif operation == "job-lookup":
+            result = read_job_lookup(cursor, request.get("jobRef"))
         else:
             raise ValueError(f"Unsupported HireTrack read operation: {operation}")
         json.dump({"ok": True, "result": result}, sys.stdout, ensure_ascii=False)

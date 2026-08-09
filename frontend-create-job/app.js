@@ -1,10 +1,28 @@
 (() => {
   const state = {
+    mode: 'new', // 'new' | 'existing'
     catalog: [],
     catalogLoaded: false,
     selectedClient: null,
+    loadedJob: null, // { jobRef, eqlistId, clientId, clientName, dateFrom, dateTo, existingLines }
     lines: [], // { typeId, name, categoryName, qty, availability: null | { availableQty, stocklevelForWarehouse, status: 'pending'|'ok'|'low'|'none'|'error' } }
   };
+
+  const modeNewBtn = document.getElementById('mode-new');
+  const modeExistingBtn = document.getElementById('mode-existing');
+  const newJobCard = document.getElementById('new-job-card');
+  const newJobClientCard = document.getElementById('new-job-client-card');
+  const existingJobCard = document.getElementById('existing-job-card');
+  const equipmentCardTitle = document.getElementById('equipment-card-title');
+
+  const jobRefSearchInput = document.getElementById('job-ref-search');
+  const jobRefOpenBtn = document.getElementById('job-ref-open');
+  const jobRefStatusEl = document.getElementById('job-ref-status');
+  const jobLoadedInfoEl = document.getElementById('job-loaded-info');
+  const jobLoadedRefEl = document.getElementById('job-loaded-ref');
+  const jobLoadedClientEl = document.getElementById('job-loaded-client');
+  const jobLoadedDatesEl = document.getElementById('job-loaded-dates');
+  const existingLinesBodyEl = document.getElementById('existing-lines-body');
 
   const jobNameInput = document.getElementById('job-name');
   const dateFromInput = document.getElementById('date-from');
@@ -44,6 +62,11 @@
   }
 
   function getDateRange() {
+    if (state.mode === 'existing') {
+      return state.loadedJob
+        ? { dateFrom: state.loadedJob.dateFrom, dateTo: state.loadedJob.dateTo }
+        : { dateFrom: null, dateTo: null };
+    }
     return { dateFrom: toHiretrackDateTime(dateFromInput.value), dateTo: toHiretrackDateTime(dateToInput.value) };
   }
 
@@ -62,6 +85,10 @@
   // immediately instead of only surfacing after HireTrack gets the wrong
   // dates. Also flags "range error" is dateTo <= dateFrom.
   function updateDateReadbacks() {
+    if (state.mode === 'existing') {
+      dateRangeErrorEl.classList.add('hidden');
+      return true;
+    }
     for (const [input, el] of [[dateFromInput, dateFromReadbackEl], [dateToInput, dateToReadbackEl]]) {
       if (!input.value) {
         el.textContent = 'не указано';
@@ -78,6 +105,74 @@
     dateRangeErrorEl.classList.toggle('hidden', !rangeInvalid);
     return !rangeInvalid;
   }
+
+  // --- Mode toggle (new job vs open an existing one) ---
+  function setMode(mode) {
+    state.mode = mode;
+    modeNewBtn.classList.toggle('active', mode === 'new');
+    modeExistingBtn.classList.toggle('active', mode === 'existing');
+    newJobCard.classList.toggle('hidden', mode !== 'new');
+    newJobClientCard.classList.toggle('hidden', mode !== 'new');
+    existingJobCard.classList.toggle('hidden', mode !== 'existing');
+    equipmentCardTitle.textContent = mode === 'existing' ? 'Добавить оборудование' : 'Оборудование';
+    submitBtn.textContent = mode === 'existing' ? 'Добавить в работу' : 'Создать работу в HireTrack';
+    resultEl.classList.add('hidden');
+    state.lines = [];
+    renderLines();
+    updateSubmitState();
+  }
+
+  modeNewBtn.addEventListener('click', () => setMode('new'));
+  modeExistingBtn.addEventListener('click', () => setMode('existing'));
+
+  async function openExistingJob() {
+    const jobRef = jobRefSearchInput.value.trim();
+    if (!jobRef) {
+      jobRefStatusEl.textContent = 'Введите номер работы (Job Ref).';
+      return;
+    }
+    state.loadedJob = null;
+    jobLoadedInfoEl.classList.add('hidden');
+    jobRefStatusEl.textContent = 'Загрузка…';
+    try {
+      const res = await fetch(`/api/create-job/jobs/${encodeURIComponent(jobRef)}`);
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'Работа не найдена');
+      const job = data.job;
+      const eqlist = job.eqlists && job.eqlists[0];
+      if (!eqlist) throw new Error('У этой работы нет Eqlist — добавление позиций невозможно.');
+
+      state.loadedJob = {
+        jobRef: job.jobRef,
+        eqlistId: eqlist.eqlistId,
+        clientId: eqlist.clientId,
+        clientName: eqlist.clientName,
+        dateFrom: eqlist.dateOut,
+        dateTo: eqlist.dateBack,
+        existingLines: eqlist.lines || [],
+      };
+
+      jobRefStatusEl.textContent = '';
+      jobLoadedRefEl.textContent = job.jobRef;
+      jobLoadedClientEl.textContent = eqlist.clientName || `#${eqlist.clientId}`;
+      jobLoadedDatesEl.textContent = `${READBACK_FORMATTER.format(new Date(eqlist.dateOut.replace(' ', 'T')))} — ${READBACK_FORMATTER.format(new Date(eqlist.dateBack.replace(' ', 'T')))}`;
+      existingLinesBodyEl.innerHTML = '';
+      for (const line of state.loadedJob.existingLines) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${escapeHtml(line.name || '')} <span class="meta">#${line.typeId}</span></td><td>${line.qty}</td>`;
+        existingLinesBodyEl.appendChild(tr);
+      }
+      jobLoadedInfoEl.classList.remove('hidden');
+      updateSubmitState();
+    } catch (err) {
+      jobRefStatusEl.textContent = `Ошибка: ${err.message}`;
+    }
+  }
+
+  jobRefOpenBtn.addEventListener('click', openExistingJob);
+  jobRefSearchInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') openExistingJob();
+  });
 
   // --- Catalog load (once) ---
   async function loadCatalog() {
@@ -330,12 +425,14 @@
     const rangeValid = updateDateReadbacks();
     const { dateFrom, dateTo } = getDateRange();
     const ready =
-      jobNameInput.value.trim().length > 0 &&
-      state.selectedClient &&
-      dateFrom &&
-      dateTo &&
-      rangeValid &&
-      state.lines.length > 0;
+      state.mode === 'existing'
+        ? Boolean(state.loadedJob) && state.lines.length > 0
+        : jobNameInput.value.trim().length > 0 &&
+          state.selectedClient &&
+          dateFrom &&
+          dateTo &&
+          rangeValid &&
+          state.lines.length > 0;
     submitBtn.disabled = !ready;
   }
 
@@ -346,43 +443,63 @@
   dateToInput.addEventListener('change', updateSubmitState);
 
   submitBtn.addEventListener('click', async () => {
-    const { dateFrom, dateTo } = getDateRange();
-    const payload = {
-      jobName: jobNameInput.value.trim(),
-      clientId: state.selectedClient.companyId,
-      dateFrom,
-      dateTo,
-      lines: state.lines.map((line) => ({ typeId: line.typeId, quantity: line.qty })),
-    };
+    const isExisting = state.mode === 'existing';
+    const url = isExisting
+      ? `/api/create-job/jobs/${encodeURIComponent(state.loadedJob.jobRef)}/lines`
+      : '/api/create-job/bookings';
+    const payload = isExisting
+      ? {
+          eqlistId: state.loadedJob.eqlistId,
+          clientId: state.loadedJob.clientId,
+          dateFrom: state.loadedJob.dateFrom,
+          dateTo: state.loadedJob.dateTo,
+          lines: state.lines.map((line) => ({ typeId: line.typeId, quantity: line.qty })),
+        }
+      : {
+          jobName: jobNameInput.value.trim(),
+          clientId: state.selectedClient.companyId,
+          dateFrom: getDateRange().dateFrom,
+          dateTo: getDateRange().dateTo,
+          lines: state.lines.map((line) => ({ typeId: line.typeId, quantity: line.qty })),
+        };
 
     submitBtn.disabled = true;
-    submitBtn.textContent = 'Создаём…';
+    submitBtn.textContent = isExisting ? 'Добавляем…' : 'Создаём…';
     resultEl.classList.add('hidden');
 
     try {
-      const res = await fetch('/api/create-job/bookings', {
+      const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
       const data = await res.json();
-      if (!data.ok) throw new Error(data.error || 'Не удалось создать работу');
+      if (!data.ok) throw new Error(data.error || 'Не удалось выполнить запрос');
 
       const allFailed = data.linesWritten === 0;
       const someFailed = data.failedLines && data.failedLines.length > 0;
-      let html = `Работа создана: <strong>${escapeHtml(data.jobRef || String(data.jobId))}</strong>, Eqlist <strong>${escapeHtml(data.eqRef || String(data.eqlistId))}</strong>. Записано позиций: <strong>${data.linesWritten} из ${state.lines.length}</strong>.`;
+      let html = isExisting
+        ? `Добавлено в работу <strong>${escapeHtml(state.loadedJob.jobRef)}</strong>. Записано позиций: <strong>${data.linesWritten} из ${state.lines.length}</strong>.`
+        : `Работа создана: <strong>${escapeHtml(data.jobRef || String(data.jobId))}</strong>, Eqlist <strong>${escapeHtml(data.eqRef || String(data.eqlistId))}</strong>. Записано позиций: <strong>${data.linesWritten} из ${state.lines.length}</strong>.`;
       if (someFailed) {
         html += '<br>Не удалось записать: ' + data.failedLines.map((f) => `#${f.typeId} — ${escapeHtml(f.error)}`).join('; ');
       }
       resultEl.className = allFailed ? 'result error' : someFailed ? 'result warning' : 'result success';
       resultEl.innerHTML = html;
       resultEl.classList.remove('hidden');
+
+      if (!allFailed && isExisting) {
+        // Re-open the job so the "already on this job" list reflects the new lines.
+        state.lines = [];
+        renderLines();
+        await openExistingJob();
+      }
     } catch (err) {
       resultEl.className = 'result error';
       resultEl.textContent = `Ошибка: ${err.message}`;
       resultEl.classList.remove('hidden');
     } finally {
-      submitBtn.textContent = 'Создать работу в HireTrack';
+      submitBtn.textContent = isExisting ? 'Добавить в работу' : 'Создать работу в HireTrack';
       updateSubmitState();
     }
   });

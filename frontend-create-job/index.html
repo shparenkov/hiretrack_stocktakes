@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Создание работы — HireTrack NX</title>
-  <link rel="stylesheet" href="styles.css?v=1" />
+  <link rel="stylesheet" href="styles.css?v=2" />
 </head>
 <body>
   <header class="topbar">
@@ -14,6 +14,13 @@
 
   <main>
     <section class="card">
+      <div class="mode-toggle">
+        <button type="button" id="mode-new" class="mode-btn active">Новая работа</button>
+        <button type="button" id="mode-existing" class="mode-btn">Существующая работа</button>
+      </div>
+    </section>
+
+    <section class="card" id="new-job-card">
       <h2>Работа</h2>
       <div class="field-row">
         <label class="field">
@@ -36,7 +43,7 @@
       <p id="date-range-error" class="field-error hidden">Дата окончания должна быть позже даты начала.</p>
     </section>
 
-    <section class="card">
+    <section class="card" id="new-job-client-card">
       <h2>Клиент</h2>
       <div class="client-picker">
         <input type="text" id="client-search" placeholder="Начните вводить название компании…" autocomplete="off" />
@@ -48,8 +55,30 @@
       </div>
     </section>
 
-    <section class="card">
-      <h2>Оборудование</h2>
+    <section class="card hidden" id="existing-job-card">
+      <h2>Существующая работа</h2>
+      <div class="field-row">
+        <label class="field">
+          Номер работы (Job Ref)
+          <input type="text" id="job-ref-search" placeholder="Например: Р7169МСК" autocomplete="off" />
+        </label>
+        <button type="button" id="job-ref-open">Открыть</button>
+      </div>
+      <p id="job-ref-status" class="load-status"></p>
+      <div id="job-loaded-info" class="job-loaded-info hidden">
+        <p><strong id="job-loaded-ref"></strong> — <span id="job-loaded-client"></span></p>
+        <p class="job-loaded-dates">Даты работы: <strong id="job-loaded-dates"></strong> <span class="hint">(фиксированы — совпадают с уже существующими позициями)</span></p>
+        <table class="lines-table">
+          <thead>
+            <tr><th>Оборудование</th><th>Кол-во</th></tr>
+          </thead>
+          <tbody id="existing-lines-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card" id="equipment-card">
+      <h2 id="equipment-card-title">Оборудование</h2>
       <div class="equipment-picker">
         <input type="text" id="equipment-search" placeholder="Поиск по названию, категории, коду…" autocomplete="off" />
         <div id="equipment-results" class="equipment-results hidden"></div>
@@ -75,6 +104,6 @@
     </section>
   </main>
 
-  <script src="app.js?v=1"></script>
+  <script src="app.js?v=2"></script>
 </body>
 </html>
