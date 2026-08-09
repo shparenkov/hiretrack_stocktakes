@@ -171,7 +171,7 @@ COMPANY_SEARCH_QUERY = """
         "CompanyName",
         "Town"
     FROM "Company"
-    WHERE "CompanyName" LIKE ?
+    WHERE UPPER("CompanyName") LIKE UPPER(?)
         AND COALESCE("Archived", FALSE) = FALSE
         AND COALESCE("Hold", FALSE) = FALSE
     ORDER BY "CompanyName"

@@ -156,12 +156,22 @@ async function initialiseHiretrackBooking(input) {
         writeResult: parseWriteResult(row),
     };
 }
-// Batches initialise_new_booking (first line, creates the Job+Eqlist) +
-// append_to_booking (remaining lines) into one call, mirroring
-// createEquipmentNoteWithLines's shape. Callers (the rider-matching Claude
-// Skill) must have already shown the proposed line list to the user and
-// gotten explicit confirmation before calling this - unlike the Note write
-// path, this creates a real Job and Eqlist in production HireTrack.
+// Batches initialise_new_booking (creates the Job+Eqlist shell) +
+// append_to_booking (every line, including the "first" one) into one call,
+// mirroring createEquipmentNoteWithLines's shape. Callers (the rider-matching
+// Claude Skill) must have already shown the proposed line list to the user
+// and gotten explicit confirmation before calling this - unlike the Note
+// write path, this creates a real Job and Eqlist in production HireTrack.
+//
+// IMPORTANT (confirmed live 2026-08-09): initialise_new_booking's embedded
+// "first line" (its own hiretrack_type_id/quantity_required params) never
+// actually persists a Sort row on this server - it only creates the Job and
+// Eqlist shell. Verified by calling it alone and reading Sort straight after:
+// zero rows for the new Eqlist. Confirmed independently when a real user
+// booking only got its second (appended) line recorded, not the first
+// (initialise-only) one. So every line, including the first, goes through
+// append_to_booking - initialiseHiretrackBooking's own typeId/quantity here
+// are only "required shape" for the API call, not a real write.
 async function createHiretrackBooking(input) {
     if (input.lines.length === 0) {
         throw new Error('createHiretrackBooking requires at least one line.');
@@ -181,12 +191,12 @@ async function createHiretrackBooking(input) {
     if (!init.jobId || !init.eqlistId) {
         throw new Error(`HireTrack initialise_new_booking did not return a JobID/EqlistID: ${JSON.stringify(init)}`);
     }
-    let linesWritten = 1;
+    let linesWritten = 0;
     const failedLines = [];
     // Sequential on purpose, same reasoning as the Note write path: rider line
     // counts are small, and this isolates each line's failure instead of
     // aborting the whole booking on the first bad line.
-    for (const line of restLines) {
+    for (const line of [firstLine, ...restLines]) {
         try {
             await appendToHiretrackBooking({
                 typeId: line.typeId,
