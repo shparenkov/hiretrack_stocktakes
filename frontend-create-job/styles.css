@@ -217,7 +217,29 @@ main {
 
 .mode-btn.active { background: var(--navy); color: #fff; border-color: var(--navy); }
 
-#job-ref-search { flex: 1; }
+.job-picker { position: relative; }
+
+#job-ref-search {
+  width: 100%;
+  font: 14px Arial, sans-serif;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+}
+
+#job-ref-search:focus { outline: 2px solid var(--blue); outline-offset: -1px; }
+
+.job-ref-results {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid var(--line);
+  box-shadow: 0 6px 14px rgba(0,0,0,.12);
+}
 
 .job-loaded-info { margin-top: 14px; }
 .job-loaded-info p { margin: 0 0 8px; }

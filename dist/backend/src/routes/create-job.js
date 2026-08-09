@@ -72,6 +72,16 @@ exports.createJobRouter.post('/bookings', async (req, res) => {
         res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
     }
 });
+exports.createJobRouter.get('/jobs', async (req, res) => {
+    const query = typeof req.query.q === 'string' ? req.query.q : '';
+    try {
+        const jobs = await (0, hiretrack_job_lookup_1.searchHiretrackJobs)(query);
+        res.json({ ok: true, jobs });
+    }
+    catch (error) {
+        res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+});
 exports.createJobRouter.get('/jobs/:jobRef', async (req, res) => {
     try {
         const job = await (0, hiretrack_job_lookup_1.lookupHiretrackJob)(String(req.params.jobRef));

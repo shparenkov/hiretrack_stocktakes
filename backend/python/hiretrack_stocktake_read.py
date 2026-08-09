@@ -177,6 +177,19 @@ COMPANY_SEARCH_QUERY = """
     ORDER BY "CompanyName"
 """
 
+# Interactive job search for the "open existing job" flow - users type a
+# name (client or job title), not the job number, so this searches
+# Job_Title/Name/Job_Ref together and returns the job numbers to pick from.
+# Plain LIKE, no case transformation attempted: UPPER()/LOWER() don't fold
+# Cyrillic case in this NexusDB instance (confirmed live) - matches as-typed
+# case only, same limitation as the exact-match lookup below.
+JOB_SEARCH_QUERY = """
+    SELECT TOP 20 "JobNo", "Job_Ref", "Job_Title", "Name"
+    FROM "Jobs"
+    WHERE "Job_Title" LIKE ? OR "Name" LIKE ? OR "Job_Ref" LIKE ?
+    ORDER BY "JobNo" DESC
+"""
+
 # "Open an existing job" lookup for the create-job page - job ref -> its
 # Eqlists (each with its real DateOut/DateBack, since append_to_booking must
 # match those exactly - see EQUIPMENT_CATALOG_MATCH_BLUEPRINT.md) and their
@@ -334,6 +347,14 @@ def read_company_search(cursor, query_text):
     return rows_as_dicts(cursor)
 
 
+def read_job_search(cursor, query_text):
+    if not query_text or not str(query_text).strip():
+        return []
+    like_pattern = f"%{str(query_text).strip()}%"
+    cursor.execute(JOB_SEARCH_QUERY, like_pattern, like_pattern, like_pattern)
+    return rows_as_dicts(cursor)
+
+
 def read_job_lookup(cursor, job_ref):
     if not job_ref or not str(job_ref).strip():
         raise ValueError("job-lookup requires a 'jobRef'")
@@ -377,6 +398,8 @@ def main():
             result = read_company_search(cursor, request.get("query"))
         elif operation == "job-lookup":
             result = read_job_lookup(cursor, request.get("jobRef"))
+        elif operation == "job-search":
+            result = read_job_search(cursor, request.get("query"))
         else:
             raise ValueError(f"Unsupported HireTrack read operation: {operation}")
         json.dump({"ok": True, "result": result}, sys.stdout, ensure_ascii=False)

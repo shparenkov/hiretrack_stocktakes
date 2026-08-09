@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Создание работы — HireTrack NX</title>
-  <link rel="stylesheet" href="styles.css?v=2" />
+  <link rel="stylesheet" href="styles.css?v=3" />
 </head>
 <body>
   <header class="topbar">
@@ -57,12 +57,9 @@
 
     <section class="card hidden" id="existing-job-card">
       <h2>Существующая работа</h2>
-      <div class="field-row">
-        <label class="field">
-          Номер работы (Job Ref)
-          <input type="text" id="job-ref-search" placeholder="Например: Р7169МСК" autocomplete="off" />
-        </label>
-        <button type="button" id="job-ref-open">Открыть</button>
+      <div class="job-picker">
+        <input type="text" id="job-ref-search" placeholder="Название работы или клиент…" autocomplete="off" />
+        <div id="job-ref-results" class="job-ref-results hidden"></div>
       </div>
       <p id="job-ref-status" class="load-status"></p>
       <div id="job-loaded-info" class="job-loaded-info hidden">
@@ -104,6 +101,6 @@
     </section>
   </main>
 
-  <script src="app.js?v=2"></script>
+  <script src="app.js?v=3"></script>
 </body>
 </html>

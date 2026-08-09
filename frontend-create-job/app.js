@@ -16,7 +16,7 @@
   const equipmentCardTitle = document.getElementById('equipment-card-title');
 
   const jobRefSearchInput = document.getElementById('job-ref-search');
-  const jobRefOpenBtn = document.getElementById('job-ref-open');
+  const jobRefResultsEl = document.getElementById('job-ref-results');
   const jobRefStatusEl = document.getElementById('job-ref-status');
   const jobLoadedInfoEl = document.getElementById('job-loaded-info');
   const jobLoadedRefEl = document.getElementById('job-loaded-ref');
@@ -125,10 +125,58 @@
   modeNewBtn.addEventListener('click', () => setMode('new'));
   modeExistingBtn.addEventListener('click', () => setMode('existing'));
 
-  async function openExistingJob() {
-    const jobRef = jobRefSearchInput.value.trim();
+  // Interactive job search: users know the client/job name, not the job
+  // number, so typing a name suggests matching job numbers to pick from -
+  // same debounced-dropdown pattern as the client search above.
+  const searchJobs = debounce(async (query) => {
+    if (query.trim().length < 2) {
+      jobRefResultsEl.classList.add('hidden');
+      jobRefResultsEl.innerHTML = '';
+      return;
+    }
+    try {
+      const res = await fetch(`/api/create-job/jobs?q=${encodeURIComponent(query)}`);
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'Ошибка поиска работы');
+      renderJobResults(data.jobs || []);
+    } catch (err) {
+      jobRefResultsEl.innerHTML = `<div class="result-row">Ошибка: ${escapeHtml(err.message)}</div>`;
+      jobRefResultsEl.classList.remove('hidden');
+    }
+  }, 300);
+
+  function renderJobResults(jobs) {
+    if (jobs.length === 0) {
+      jobRefResultsEl.innerHTML = '<div class="result-row">Ничего не найдено</div>';
+      jobRefResultsEl.classList.remove('hidden');
+      return;
+    }
+    jobRefResultsEl.innerHTML = '';
+    for (const job of jobs) {
+      const row = document.createElement('div');
+      row.className = 'result-row';
+      const title = job.jobTitle || job.clientName || '';
+      row.innerHTML = `<div class="name">${escapeHtml(job.jobRef)} ${title ? '· ' + escapeHtml(title) : ''}</div><div class="meta">${escapeHtml(job.clientName || '')}</div>`;
+      row.addEventListener('click', () => {
+        jobRefSearchInput.value = job.jobRef;
+        jobRefResultsEl.classList.add('hidden');
+        openExistingJob(job.jobRef);
+      });
+      jobRefResultsEl.appendChild(row);
+    }
+    jobRefResultsEl.classList.remove('hidden');
+  }
+
+  jobRefSearchInput.addEventListener('input', () => searchJobs(jobRefSearchInput.value));
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.job-picker')) {
+      jobRefResultsEl.classList.add('hidden');
+    }
+  });
+
+  async function openExistingJob(jobRef) {
     if (!jobRef) {
-      jobRefStatusEl.textContent = 'Введите номер работы (Job Ref).';
+      jobRefStatusEl.textContent = 'Введите номер работы или выберите из списка.';
       return;
     }
     state.loadedJob = null;
@@ -168,11 +216,6 @@
       jobRefStatusEl.textContent = `Ошибка: ${err.message}`;
     }
   }
-
-  jobRefOpenBtn.addEventListener('click', openExistingJob);
-  jobRefSearchInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') openExistingJob();
-  });
 
   // --- Catalog load (once) ---
   async function loadCatalog() {
@@ -492,7 +535,7 @@
         // Re-open the job so the "already on this job" list reflects the new lines.
         state.lines = [];
         renderLines();
-        await openExistingJob();
+        await openExistingJob(state.loadedJob.jobRef);
       }
     } catch (err) {
       resultEl.className = 'result error';

@@ -45,6 +45,42 @@ interface RawJobLookupResult {
   eqlists: RawEqlistRow[];
 }
 
+export interface HiretrackJobSearchResult {
+  jobNo: number;
+  jobRef: string;
+  jobTitle: string | null;
+  clientName: string | null;
+}
+
+interface RawJobSearchRow {
+  JobNo: number;
+  Job_Ref: string;
+  Job_Title: string | null;
+  Name: string | null;
+}
+
+// Interactive job search - users search by name (client or job title), not
+// the job number, so this matches Job_Title/Name/Job_Ref and returns the
+// job numbers (Job_Ref) to pick from, for lookupHiretrackJob above.
+export async function searchHiretrackJobs(query: string): Promise<HiretrackJobSearchResult[]> {
+  const trimmed = query.trim();
+  if (trimmed.length < 2) {
+    return [];
+  }
+
+  const rows = await runHiretrackOdbcRead<RawJobSearchRow[]>({
+    operation: 'job-search',
+    query: trimmed,
+  });
+
+  return rows.map((row) => ({
+    jobNo: row.JobNo,
+    jobRef: row.Job_Ref,
+    jobTitle: row.Job_Title ?? null,
+    clientName: row.Name ?? null,
+  }));
+}
+
 export async function lookupHiretrackJob(jobRef: string): Promise<HiretrackJobLookupResult | null> {
   const trimmed = jobRef.trim();
   if (!trimmed) {

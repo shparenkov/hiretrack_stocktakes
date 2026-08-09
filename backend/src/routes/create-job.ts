@@ -2,7 +2,7 @@ import { Request, Response, Router } from 'express';
 import { z } from 'zod';
 import { getEquipmentCatalog } from '../services/hiretrack-equipment-catalog';
 import { searchHiretrackCompanies } from '../services/hiretrack-company-search';
-import { lookupHiretrackJob } from '../services/hiretrack-job-lookup';
+import { lookupHiretrackJob, searchHiretrackJobs } from '../services/hiretrack-job-lookup';
 import {
   checkHiretrackAvailability,
   createHiretrackBooking,
@@ -73,6 +73,16 @@ createJobRouter.post('/bookings', async (req: Request, res: Response) => {
   try {
     const result = await createHiretrackBooking(parsed.data);
     res.json({ ok: true, ...result });
+  } catch (error) {
+    res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+createJobRouter.get('/jobs', async (req: Request, res: Response) => {
+  const query = typeof req.query.q === 'string' ? req.query.q : '';
+  try {
+    const jobs = await searchHiretrackJobs(query);
+    res.json({ ok: true, jobs });
   } catch (error) {
     res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
   }
