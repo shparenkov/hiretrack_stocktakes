@@ -55,6 +55,11 @@ function renderHiretrackPortalPage() {
         <div class="section-body"><h2>План склада</h2><p>Сборки на сегодня и ближайшие дни напрямую из HireTrack NX.</p><div class="facts"><span>Работы и Equipment Lists</span><span>Готовность каждой позиции</span><span>Автообновление каждые 30 секунд</span></div></div>
         <span class="open">Открыть план склада →</span>
       </a>
+      <a class="section" href="/crew-bookings/">
+        <div class="section-head"><strong>Crew Bookings</strong><span class="code">CREWING</span></div>
+        <div class="section-body"><h2>Назначение персонала</h2><p>Job → Фаза → Позиция с назначением людей прямо из HireTrack NX.</p><div class="facts"><span>Job/фаза/позиция по дням</span><span>Поиск и подтверждение назначения</span><span>Пишет напрямую в HireTrack</span></div></div>
+        <span class="open">Открыть Crew Bookings →</span>
+      </a>
     </div>
   </main>
 </body>

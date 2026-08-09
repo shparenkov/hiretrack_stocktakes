@@ -7,7 +7,10 @@ exports.createApp = createApp;
 const cors_1 = __importDefault(require("cors"));
 const express_1 = __importDefault(require("express"));
 const fs_1 = __importDefault(require("fs"));
+const path_1 = __importDefault(require("path"));
+const crew_bookings_1 = require("./routes/crew-bookings");
 const tickets_1 = require("./routes/tickets");
+const crew_bookings_pin_auth_1 = require("./services/crew-bookings-pin-auth");
 const bitrix_ticket_app_1 = require("./services/bitrix-ticket-app");
 const password_auth_1 = require("./services/password-auth");
 const portal_page_1 = require("./services/portal-page");
@@ -34,6 +37,13 @@ function createApp() {
     });
     app.use('/tickets', tickets_1.ticketsRouter);
     app.use('/api/tickets', tickets_1.ticketsRouter);
+    (0, crew_bookings_pin_auth_1.installCrewBookingsPinAuth)(app);
+    app.use('/api/crew-bookings', crew_bookings_1.crewBookingsRouter);
+    const crewBookingsFrontendPath = path_1.default.resolve(process.cwd(), 'frontend-crew-bookings');
+    app.get('/crew-bookings/', (_req, res) => {
+        res.sendFile(path_1.default.join(crewBookingsFrontendPath, 'index.html'));
+    });
+    app.use('/crew-bookings', express_1.default.static(crewBookingsFrontendPath, { index: false, redirect: false }));
     app.all(['/bitrix/tickets/app', '/bitrix/tickets/install'], (_req, res) => {
         const uiPath = '/bitrix/tickets/ui/';
         res.type('html').send((0, bitrix_ticket_app_1.renderBitrixTicketsAppShell)({ uiPath }));
