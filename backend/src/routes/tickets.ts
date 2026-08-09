@@ -7,6 +7,12 @@ import { lookupEquipmentInHiretrack } from '../services/hiretrack-equipment-look
 import { lookupStocktakeHistoryInHiretrack } from '../services/hiretrack-stocktake-history';
 import { getEquipmentCatalog } from '../services/hiretrack-equipment-catalog';
 import { createEquipmentNoteWithLines } from '../services/hiretrack-equipment-note-write';
+import {
+  checkHiretrackAvailability,
+  initialiseHiretrackBooking,
+  appendToHiretrackBooking,
+  createHiretrackBooking,
+} from '../services/hiretrack-booking-api';
 import { renderStocktakeProblemPdf, renderStocktakeSummaryPdf } from '../services/stocktake-problem-pdf';
 import { HiretrackStockCheckRecord } from '../types';
 import { createTicketStore } from '../services/ticket-store';
@@ -111,6 +117,57 @@ const equipmentNoteCreateSchema = z.object({
   clientName: z.string().max(255).optional(),
   clientId: z.coerce.number().int().optional(),
   lines: z.array(equipmentNoteLineSchema).min(1).max(500),
+});
+
+const equipmentAvailabilitySchema = z.object({
+  typeId: z.coerce.number().int().positive(),
+  quantity: z.coerce.number().positive().default(1),
+  dateFrom: z.string().min(1),
+  dateTo: z.string().min(1),
+  userId: z.coerce.number().int().optional(),
+  clientId: z.coerce.number().int().optional(),
+  warehouseId: z.coerce.number().int().optional(),
+  pricelistId: z.coerce.number().int().optional(),
+});
+
+const bookingInitialiseSchema = z.object({
+  typeId: z.coerce.number().int().positive(),
+  quantity: z.coerce.number().positive(),
+  dateFrom: z.string().min(1),
+  dateTo: z.string().min(1),
+  jobName: z.string().min(1).max(50),
+  userId: z.coerce.number().int().optional(),
+  clientId: z.coerce.number().int().positive(),
+  warehouseId: z.coerce.number().int().optional(),
+  pricelistId: z.coerce.number().int().optional(),
+});
+
+const bookingAppendSchema = z.object({
+  typeId: z.coerce.number().int().positive(),
+  quantity: z.coerce.number().positive(),
+  dateFrom: z.string().min(1),
+  dateTo: z.string().min(1),
+  eqlistId: z.coerce.number().int().positive(),
+  userId: z.coerce.number().int().optional(),
+  clientId: z.coerce.number().int().positive(),
+  warehouseId: z.coerce.number().int().optional(),
+  pricelistId: z.coerce.number().int().optional(),
+});
+
+const bookingLineSchema = z.object({
+  typeId: z.coerce.number().int().positive(),
+  quantity: z.coerce.number().positive(),
+});
+
+const bookingCreateSchema = z.object({
+  jobName: z.string().min(1).max(50),
+  clientId: z.coerce.number().int().positive(),
+  dateFrom: z.string().min(1),
+  dateTo: z.string().min(1),
+  userId: z.coerce.number().int().optional(),
+  warehouseId: z.coerce.number().int().optional(),
+  pricelistId: z.coerce.number().int().optional(),
+  lines: z.array(bookingLineSchema).min(1).max(200),
 });
 
 const stocktakeProblemPdfSchema = z.object({
@@ -469,6 +526,90 @@ ticketsRouter.post('/lookups/equipment-notes', async (req, res) => {
     return res.status(502).json({
       ok: false,
       error: error instanceof Error ? error.message : 'HireTrack note creation failed',
+    });
+  }
+});
+
+ticketsRouter.get('/lookups/equipment-availability', async (req, res) => {
+  const parsed = equipmentAvailabilitySchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Validation failed',
+      issues: parsed.error.flatten(),
+    });
+  }
+
+  try {
+    const result = await checkHiretrackAvailability(parsed.data);
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    return res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'HireTrack availability check failed',
+    });
+  }
+});
+
+ticketsRouter.post('/lookups/equipment-bookings/initialise', async (req, res) => {
+  const parsed = bookingInitialiseSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Validation failed',
+      issues: parsed.error.flatten(),
+    });
+  }
+
+  try {
+    const result = await initialiseHiretrackBooking(parsed.data);
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    return res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'HireTrack booking initialise failed',
+    });
+  }
+});
+
+ticketsRouter.post('/lookups/equipment-bookings/append', async (req, res) => {
+  const parsed = bookingAppendSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Validation failed',
+      issues: parsed.error.flatten(),
+    });
+  }
+
+  try {
+    const result = await appendToHiretrackBooking(parsed.data);
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    return res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'HireTrack booking append failed',
+    });
+  }
+});
+
+ticketsRouter.post('/lookups/equipment-bookings', async (req, res) => {
+  const parsed = bookingCreateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Validation failed',
+      issues: parsed.error.flatten(),
+    });
+  }
+
+  try {
+    const result = await createHiretrackBooking(parsed.data);
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    return res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'HireTrack booking creation failed',
     });
   }
 });
