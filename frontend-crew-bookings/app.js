@@ -53,10 +53,13 @@ function colFor(dateStr) {
   return dayIndex(dateStr) + 1; // column 1 of the day-track = first day
 }
 
-// "Day N" is a real HireTrack field (day offset from the job's own start,
-// shared by all phases of that job).
-function jobDayNumber(job, dateStr) {
-  return daysBetween(new Date(job.start + "T00:00:00"), new Date(dateStr + "T00:00:00")) + 1;
+// "Day N" is a real HireTrack field (CrewActivities.Description literally
+// says "Day 1"/"Day 2"/etc) - anchored to the PHASE's own start date, not
+// the job's "Due Out". They usually match, but not always (confirmed live:
+// job.start can be one day after the phase's actual activity range starts),
+// and using job.start there produced "Day 0" instead of "Day 1".
+function jobDayNumber(phase, dateStr) {
+  return daysBetween(new Date(phase.start + "T00:00:00"), new Date(dateStr + "T00:00:00")) + 1;
 }
 
 const state = {
@@ -167,7 +170,7 @@ function renderPhaseRow(job, phase, phaseIdx) {
     const iso = fmt(addDays(start, i));
     const inPhase = iso >= phase.start && iso <= phase.end;
     dayNumCells.push(
-      inPhase ? `<div class="cell day-num">Day ${jobDayNumber(job, iso)}</div>` : `<div class="cell day-num empty"></div>`
+      inPhase ? `<div class="cell day-num">Day ${jobDayNumber(phase, iso)}</div>` : `<div class="cell day-num empty"></div>`
     );
   }
 
@@ -202,7 +205,7 @@ function renderPhaseFooterRow(job, phase, phaseIdx) {
     }
     const dayInPhase = daysBetween(new Date(phase.start + "T00:00:00"), new Date(iso + "T00:00:00"));
     const count = phase.positions.reduce((sum, p) => sum + ((p.qtyPerDay || [])[dayInPhase] || 0), 0);
-    cells.push(`<div class="cell day-num">Day ${jobDayNumber(job, iso)}(${count})</div>`);
+    cells.push(`<div class="cell day-num">Day ${jobDayNumber(phase, iso)}(${count})</div>`);
   }
   return `<div class="row phase-footer" data-job="${job.id}" data-phase="${phaseIdx}">
     <div class="cell toggle"></div>
