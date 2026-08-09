@@ -63,10 +63,20 @@ def assign_position(cursor, params):
         raise ValueError(f"position_index {position_index} out of range, phase only has {len(positions)} position(s)")
     target_position = positions[position_index].IDX
 
-    cursor.execute("SELECT NameCounter, FullName FROM Name2 WHERE FullName = ?", person_name)
+    # CREW=TRUE AND not archived - same filter the read bridge uses to build
+    # the roster dropdown. Without it, an archived/inactive duplicate with
+    # the same FullName as an active crew member can get picked instead
+    # (confirmed live: "Oleg Bogdan" NameCounter 168, archived, matched
+    # before the real active NameCounter 227 - HireTrack NX's own UI doesn't
+    # render archived people in this view, so the position looked empty
+    # even though xPerson was technically set).
+    cursor.execute(
+        "SELECT NameCounter, FullName FROM Name2 WHERE FullName = ? AND CREW = TRUE AND (Archived IS NULL OR Archived = FALSE)",
+        person_name,
+    )
     people = cursor.fetchall()
     if not people:
-        raise ValueError(f"No Name2 row with FullName = {person_name!r}")
+        raise ValueError(f"No active crew Name2 row with FullName = {person_name!r}")
     person = people[0]
 
     cursor.execute(
