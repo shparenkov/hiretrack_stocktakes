@@ -25,12 +25,15 @@
         <label class="field">
           Дата и время начала
           <input type="datetime-local" id="date-from" />
+          <span id="date-from-readback" class="date-readback"></span>
         </label>
         <label class="field">
           Дата и время окончания
           <input type="datetime-local" id="date-to" />
+          <span id="date-to-readback" class="date-readback"></span>
         </label>
       </div>
+      <p id="date-range-error" class="field-error hidden">Дата окончания должна быть позже даты начала.</p>
     </section>
 
     <section class="card">

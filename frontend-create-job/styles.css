@@ -80,6 +80,20 @@ main {
 
 .field input:focus { outline: 2px solid var(--blue); outline-offset: -1px; }
 
+.date-readback {
+  font-weight: 700;
+  color: var(--green);
+  font-size: 13px;
+}
+
+.date-readback.empty { color: var(--muted); font-weight: 400; }
+
+.field-error {
+  margin: 10px 0 0;
+  color: var(--red);
+  font-weight: 600;
+}
+
 .client-picker, .equipment-picker { position: relative; }
 
 #client-search, #equipment-search {
@@ -210,6 +224,7 @@ main {
 }
 
 .result.success { background: #eef8f0; border-color: #b6dcc2; color: #205234; }
+.result.warning { background: #fff7ed; border-color: #fed6a8; color: #7a4a10; }
 .result.error { background: #fbecea; border-color: #e6b3ab; color: var(--red); }
 
 .result a { color: inherit; font-weight: 700; }

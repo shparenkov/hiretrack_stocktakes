@@ -9,6 +9,9 @@
   const jobNameInput = document.getElementById('job-name');
   const dateFromInput = document.getElementById('date-from');
   const dateToInput = document.getElementById('date-to');
+  const dateFromReadbackEl = document.getElementById('date-from-readback');
+  const dateToReadbackEl = document.getElementById('date-to-readback');
+  const dateRangeErrorEl = document.getElementById('date-range-error');
 
   const clientSearchInput = document.getElementById('client-search');
   const clientResultsEl = document.getElementById('client-results');
@@ -42,6 +45,38 @@
 
   function getDateRange() {
     return { dateFrom: toHiretrackDateTime(dateFromInput.value), dateTo: toHiretrackDateTime(dateToInput.value) };
+  }
+
+  const READBACK_FORMATTER = new Intl.DateTimeFormat('ru-RU', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+
+  // Live human-readable readback of each date field, so a value the browser
+  // silently defaulted/reset (native datetime-local inputs are unreliable if
+  // a segment - date, hour, AM/PM - isn't explicitly committed) is visible
+  // immediately instead of only surfacing after HireTrack gets the wrong
+  // dates. Also flags "range error" is dateTo <= dateFrom.
+  function updateDateReadbacks() {
+    for (const [input, el] of [[dateFromInput, dateFromReadbackEl], [dateToInput, dateToReadbackEl]]) {
+      if (!input.value) {
+        el.textContent = 'не указано';
+        el.classList.add('empty');
+        continue;
+      }
+      const parsed = new Date(input.value);
+      el.textContent = Number.isNaN(parsed.getTime()) ? 'некорректная дата' : READBACK_FORMATTER.format(parsed);
+      el.classList.remove('empty');
+    }
+
+    const { dateFrom, dateTo } = getDateRange();
+    const rangeInvalid = Boolean(dateFrom && dateTo && dateFrom >= dateTo);
+    dateRangeErrorEl.classList.toggle('hidden', !rangeInvalid);
+    return !rangeInvalid;
   }
 
   // --- Catalog load (once) ---
@@ -292,18 +327,22 @@
 
   // --- Submit ---
   function updateSubmitState() {
+    const rangeValid = updateDateReadbacks();
     const { dateFrom, dateTo } = getDateRange();
     const ready =
       jobNameInput.value.trim().length > 0 &&
       state.selectedClient &&
       dateFrom &&
       dateTo &&
+      rangeValid &&
       state.lines.length > 0;
     submitBtn.disabled = !ready;
   }
 
   jobNameInput.addEventListener('input', updateSubmitState);
+  dateFromInput.addEventListener('input', updateSubmitState);
   dateFromInput.addEventListener('change', updateSubmitState);
+  dateToInput.addEventListener('input', updateSubmitState);
   dateToInput.addEventListener('change', updateSubmitState);
 
   submitBtn.addEventListener('click', async () => {
@@ -329,11 +368,13 @@
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'Не удалось создать работу');
 
-      let html = `Работа создана: <strong>${escapeHtml(data.jobRef || String(data.jobId))}</strong>, Eqlist <strong>${escapeHtml(data.eqRef || String(data.eqlistId))}</strong>. Записано позиций: ${data.linesWritten} из ${state.lines.length}.`;
-      if (data.failedLines && data.failedLines.length > 0) {
-        html += '<br>Не удалось записать: ' + data.failedLines.map((f) => `#${f.typeId} (${escapeHtml(f.error)})`).join(', ');
+      const allFailed = data.linesWritten === 0;
+      const someFailed = data.failedLines && data.failedLines.length > 0;
+      let html = `Работа создана: <strong>${escapeHtml(data.jobRef || String(data.jobId))}</strong>, Eqlist <strong>${escapeHtml(data.eqRef || String(data.eqlistId))}</strong>. Записано позиций: <strong>${data.linesWritten} из ${state.lines.length}</strong>.`;
+      if (someFailed) {
+        html += '<br>Не удалось записать: ' + data.failedLines.map((f) => `#${f.typeId} — ${escapeHtml(f.error)}`).join('; ');
       }
-      resultEl.className = 'result success';
+      resultEl.className = allFailed ? 'result error' : someFailed ? 'result warning' : 'result success';
       resultEl.innerHTML = html;
       resultEl.classList.remove('hidden');
     } catch (err) {
@@ -350,5 +391,6 @@
     return String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
   }
 
+  updateDateReadbacks();
   loadCatalog();
 })();

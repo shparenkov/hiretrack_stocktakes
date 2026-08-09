@@ -118,6 +118,32 @@ function parseWriteResult(row: Record<string, unknown>): WriteResult {
   };
 }
 
+// TnxBookingValidationResult, from the api_v2 doc. HireTrack returns HTTP 200
+// even when a booking action is rejected (e.g. no stock for the requested
+// dates/qty) - the rejection only shows up here, as a non-zero
+// ValidationResult with BookingQty/RecordID left at 0. Never treat a 200
+// response as success without checking this.
+const VALIDATION_RESULT_MESSAGES: Record<number, string> = {
+  0: 'OK',
+  1: 'no equipment list id (bvrNoEquipmentListID)',
+  2: 'no equipment line id (bvrNoEquipmentLineID)',
+  3: 'record not found (bvrRecordNotFound)',
+  4: 'not a Nexus job (bvrNotNexusJob)',
+  5: 'eqline is for a different job (bvrEqlineIsForDifferentJob)',
+  6: 'booking dates do not match the Eqlist dates (bvrBookingDatesNEQListDates)',
+  7: 'no stock available for the requested dates/quantity (bvrNoStockAvailable)',
+  8: 'warehouse differs from Eqlist (bvrWarehouseDiffersFromEqlist)',
+};
+
+function assertBookingSuccess(action: string, row: Record<string, unknown>, writeResult: WriteResult): void {
+  const code = writeResult.validationResult;
+  if (code === null || code === 0) {
+    return;
+  }
+  const message = VALIDATION_RESULT_MESSAGES[code] || `unknown validation code ${code}`;
+  throw new Error(`HireTrack ${action} rejected: ${message} (ValidationResult=${code}, row=${JSON.stringify(row)})`);
+}
+
 export interface CheckAvailabilityInput {
   typeId: number;
   quantity: number;
@@ -225,12 +251,14 @@ export async function initialiseHiretrackBooking(input: InitialiseBookingInput):
   }
 
   const row = raw[0] as Record<string, unknown>;
+  const writeResult = parseWriteResult(row);
+  assertBookingSuccess('initialise_new_booking', row, writeResult);
   return {
     jobId: normalizeInt(row.JobID),
     jobRef: (row.JobRef as string) ?? null,
     eqlistId: normalizeInt(row.EqlistID),
     eqRef: (row.EqRef as string) ?? null,
-    writeResult: parseWriteResult(row),
+    writeResult,
   };
 }
 
@@ -389,6 +417,11 @@ export async function appendToHiretrackBooking(input: AppendToBookingInput): Pro
   }
 
   const row = raw[0] as Record<string, unknown>;
+  const writeResult = parseWriteResult(row);
+  // HireTrack returns HTTP 200 even when it rejects the line (e.g. no stock
+  // for the requested dates/qty) - only ValidationResult/BookingQty reveal
+  // that. Without this check a rejected line was silently counted as written.
+  assertBookingSuccess('append_to_booking', row, writeResult);
   return {
     typeDescription: (row.TypeDescription as string) ?? null,
     lineRefId: normalizeInt(row.LineRefID),
@@ -400,6 +433,6 @@ export async function appendToHiretrackBooking(input: AppendToBookingInput): Pro
     preDiscountPrice: normalizeFloat(row.PreDiscountPrice),
     discountedPrice: normalizeFloat(row.DiscountedPrice),
     discountRate: normalizeFloat(row.DiscountRate),
-    writeResult: parseWriteResult(row),
+    writeResult,
   };
 }
