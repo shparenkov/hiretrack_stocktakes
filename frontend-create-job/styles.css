@@ -245,6 +245,70 @@ main {
 .job-loaded-info p { margin: 0 0 8px; }
 .job-loaded-dates .hint { color: var(--muted); font-weight: 400; font-size: 12px; }
 
+/* Nested Sections -> lines -> (Composite/Alias) components tree */
+.lines-tree { margin-top: 10px; border: 1px solid var(--line); }
+
+.tree-section + .tree-section { border-top: 1px solid var(--line); }
+
+.tree-section-header {
+  padding: 7px 10px;
+  background: var(--canvas);
+  color: var(--navy);
+  font: 700 11px Arial, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.tree-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px 7px 22px;
+  border-top: 1px solid #eef2f5;
+  background: #fff;
+}
+
+.tree-line-name { flex: 1; }
+.tree-line-name .meta { color: var(--muted); font-size: 12px; margin-left: 4px; }
+
+.tree-line-qty {
+  color: var(--muted);
+  font-weight: 700;
+  min-width: 26px;
+  text-align: right;
+}
+
+.type-badge {
+  font: 700 10px Arial, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  padding: 2px 7px;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+
+.type-badge.normal { background: var(--canvas); color: var(--muted); }
+.type-badge.composite { background: #e7f0fb; color: var(--blue); }
+.type-badge.alias { background: #f3e8fb; color: #6b3fa0; }
+.type-badge.priced-alias { background: #fdeee0; color: #a15b12; }
+.type-badge.markup { background: #fbecea; color: var(--red); }
+
+.tree-components { padding-left: 44px; background: #fbfcfd; }
+
+.tree-component-line {
+  display: flex;
+  gap: 6px;
+  padding: 4px 10px 4px 0;
+  color: var(--muted);
+  font-size: 12px;
+  border-top: 1px solid #eef2f5;
+}
+
+.tree-component-line::before { content: '↳'; }
+.tree-component-qty { margin-left: auto; font-weight: 700; }
+
+.tree-empty { padding: 10px; color: var(--muted); }
+
 .submit-card { display: flex; flex-direction: column; gap: 12px; align-items: flex-start; }
 
 #submit-btn {

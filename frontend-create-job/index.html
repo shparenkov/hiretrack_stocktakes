@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Создание работы — HireTrack NX</title>
-  <link rel="stylesheet" href="styles.css?v=3" />
+  <link rel="stylesheet" href="styles.css?v=4" />
 </head>
 <body>
   <header class="topbar">
@@ -65,12 +65,7 @@
       <div id="job-loaded-info" class="job-loaded-info hidden">
         <p><strong id="job-loaded-ref"></strong> — <span id="job-loaded-client"></span></p>
         <p class="job-loaded-dates">Даты работы: <strong id="job-loaded-dates"></strong> <span class="hint">(фиксированы — совпадают с уже существующими позициями)</span></p>
-        <table class="lines-table">
-          <thead>
-            <tr><th>Оборудование</th><th>Кол-во</th></tr>
-          </thead>
-          <tbody id="existing-lines-body"></tbody>
-        </table>
+        <div id="existing-lines-tree" class="lines-tree"></div>
       </div>
     </section>
 
@@ -101,6 +96,6 @@
     </section>
   </main>
 
-  <script src="app.js?v=3"></script>
+  <script src="app.js?v=4"></script>
 </body>
 </html>

@@ -10,6 +10,18 @@ export interface HiretrackJobLookupLine {
   typeId: number;
   name: string | null;
   qty: number;
+  sectionId: number | null;
+  // TEquipmentType: 0=etSimple, 1=etCompositeKit, 2=etAliasKit,
+  // 3=etPricedAliasKit, 4=etMarkup - the frontend cross-references this
+  // type's `components` from the already-loaded catalog cache to render a
+  // nested view for Composite/Alias lines, so no extra fetch is needed here.
+  equipmentType: number | null;
+}
+
+export interface HiretrackJobLookupSection {
+  sectionId: number;
+  sectionText: string | null;
+  sortOrder: number | null;
 }
 
 export interface HiretrackJobLookupEqlist {
@@ -19,6 +31,7 @@ export interface HiretrackJobLookupEqlist {
   dateBack: string;
   clientId: number | null;
   clientName: string | null;
+  sections: HiretrackJobLookupSection[];
   lines: HiretrackJobLookupLine[];
 }
 
@@ -29,6 +42,12 @@ export interface HiretrackJobLookupResult {
   eqlists: HiretrackJobLookupEqlist[];
 }
 
+interface RawSectionRow {
+  SectionId: number;
+  SectionText: string | null;
+  sortOrder: number | null;
+}
+
 interface RawEqlistRow {
   Eql_no: number;
   Eql_name: string | null;
@@ -36,7 +55,14 @@ interface RawEqlistRow {
   DateBack: string;
   Client_no: number | null;
   Client_name: string | null;
-  lines: { EquipmentTypeId: number; EquipmentName: string | null; Quant: number }[];
+  lines: {
+    EquipmentTypeId: number;
+    EquipmentName: string | null;
+    Quant: number;
+    SectionId: number | null;
+    EquipmentType: number | null;
+  }[];
+  sections: RawSectionRow[];
 }
 
 interface RawJobLookupResult {
@@ -130,10 +156,17 @@ export async function lookupHiretrackJob(jobRef: string): Promise<HiretrackJobLo
       dateBack,
       clientId: eqlist.Client_no ?? null,
       clientName: eqlist.Client_name ?? null,
+      sections: eqlist.sections.map((section) => ({
+        sectionId: section.SectionId,
+        sectionText: section.SectionText ?? null,
+        sortOrder: section.sortOrder ?? null,
+      })),
       lines: eqlist.lines.map((line) => ({
         typeId: line.EquipmentTypeId,
         name: line.EquipmentName ?? null,
         qty: line.Quant,
+        sectionId: line.SectionId ?? null,
+        equipmentType: line.EquipmentType ?? null,
       })),
     });
   }

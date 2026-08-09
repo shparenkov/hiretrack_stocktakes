@@ -2,6 +2,7 @@
   const state = {
     mode: 'new', // 'new' | 'existing'
     catalog: [],
+    catalogById: new Map(),
     catalogLoaded: false,
     selectedClient: null,
     loadedJob: null, // { jobRef, eqlistId, clientId, clientName, dateFrom, dateTo, existingLines }
@@ -22,7 +23,7 @@
   const jobLoadedRefEl = document.getElementById('job-loaded-ref');
   const jobLoadedClientEl = document.getElementById('job-loaded-client');
   const jobLoadedDatesEl = document.getElementById('job-loaded-dates');
-  const existingLinesBodyEl = document.getElementById('existing-lines-body');
+  const existingLinesTreeEl = document.getElementById('existing-lines-tree');
 
   const jobNameInput = document.getElementById('job-name');
   const dateFromInput = document.getElementById('date-from');
@@ -174,6 +175,107 @@
     }
   });
 
+  // TEquipmentType: 0=etSimple, 1=etCompositeKit, 2=etAliasKit,
+  // 3=etPricedAliasKit, 4=etMarkup.
+  const EQUIPMENT_TYPE_BADGES = {
+    0: { cls: 'normal', label: 'Обычное' },
+    1: { cls: 'composite', label: 'Composite' },
+    2: { cls: 'alias', label: 'Alias' },
+    3: { cls: 'priced-alias', label: 'Priced Alias' },
+    4: { cls: 'markup', label: 'Markup' },
+  };
+
+  function typeBadgeHtml(equipmentType) {
+    const info = EQUIPMENT_TYPE_BADGES[equipmentType] || EQUIPMENT_TYPE_BADGES[0];
+    return `<span class="type-badge ${info.cls}">${info.label}</span>`;
+  }
+
+  // Nested view: Sections -> lines -> (for Composite/Alias lines) their
+  // components. Components come straight from the already-loaded catalog
+  // cache (state.catalogById), not a separate fetch - equipment-catalog-full
+  // already joins COMPOSIT for every item.
+  function renderExistingLinesTree(loadedJob) {
+    const sections = loadedJob.existingSections;
+    const lines = loadedJob.existingLines;
+    existingLinesTreeEl.innerHTML = '';
+
+    if (lines.length === 0) {
+      existingLinesTreeEl.innerHTML = '<div class="tree-empty">На этой работе пока нет оборудования.</div>';
+      return;
+    }
+
+    const linesBySection = new Map();
+    for (const line of lines) {
+      const key = line.sectionId ?? 'none';
+      const list = linesBySection.get(key) || [];
+      list.push(line);
+      linesBySection.set(key, list);
+    }
+
+    const orderedSections = [...sections].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+    const seenKeys = new Set();
+
+    const renderSection = (sectionEl, key, title) => {
+      const sectionLines = linesBySection.get(key) || [];
+      if (sectionLines.length === 0) return;
+      seenKeys.add(key);
+
+      const header = document.createElement('div');
+      header.className = 'tree-section-header';
+      header.textContent = title;
+      sectionEl.appendChild(header);
+
+      for (const line of sectionLines) {
+        const catalogItem = state.catalogById.get(line.typeId);
+        const equipmentType = line.equipmentType ?? catalogItem?.equipmentType ?? 0;
+        const components = catalogItem?.components || [];
+
+        const lineEl = document.createElement('div');
+        lineEl.className = 'tree-line';
+        lineEl.innerHTML = `
+          <span class="tree-line-name">${escapeHtml(line.name || '')} <span class="meta">#${line.typeId}</span></span>
+          ${typeBadgeHtml(equipmentType)}
+          <span class="tree-line-qty">×${line.qty}</span>
+        `;
+        sectionEl.appendChild(lineEl);
+
+        if (equipmentType > 0 && components.length > 0) {
+          const componentsEl = document.createElement('div');
+          componentsEl.className = 'tree-components';
+          for (const component of components) {
+            const compLineEl = document.createElement('div');
+            compLineEl.className = 'tree-component-line';
+            compLineEl.innerHTML = `<span>${escapeHtml(component.componentName || '')} <span class="meta">#${component.componentTypeId}</span></span><span class="tree-component-qty">×${component.quantity}</span>`;
+            componentsEl.appendChild(compLineEl);
+          }
+          sectionEl.appendChild(componentsEl);
+        }
+      }
+    };
+
+    for (const section of orderedSections) {
+      const sectionEl = document.createElement('div');
+      sectionEl.className = 'tree-section';
+      renderSection(sectionEl, section.sectionId, section.sectionText || `Секция #${section.sectionId}`);
+      if (sectionEl.children.length > 0) existingLinesTreeEl.appendChild(sectionEl);
+    }
+
+    // Lines whose sectionId didn't match any known section (or has none).
+    if (!seenKeys.has('none') && linesBySection.has('none')) {
+      const sectionEl = document.createElement('div');
+      sectionEl.className = 'tree-section';
+      renderSection(sectionEl, 'none', 'Без секции');
+      if (sectionEl.children.length > 0) existingLinesTreeEl.appendChild(sectionEl);
+    }
+    for (const key of linesBySection.keys()) {
+      if (seenKeys.has(key) || key === 'none') continue;
+      const sectionEl = document.createElement('div');
+      sectionEl.className = 'tree-section';
+      renderSection(sectionEl, key, `Секция #${key}`);
+      if (sectionEl.children.length > 0) existingLinesTreeEl.appendChild(sectionEl);
+    }
+  }
+
   async function openExistingJob(jobRef) {
     if (!jobRef) {
       jobRefStatusEl.textContent = 'Введите номер работы или выберите из списка.';
@@ -197,6 +299,7 @@
         clientName: eqlist.clientName,
         dateFrom: eqlist.dateOut,
         dateTo: eqlist.dateBack,
+        existingSections: eqlist.sections || [],
         existingLines: eqlist.lines || [],
       };
 
@@ -204,12 +307,7 @@
       jobLoadedRefEl.textContent = job.jobRef;
       jobLoadedClientEl.textContent = eqlist.clientName || `#${eqlist.clientId}`;
       jobLoadedDatesEl.textContent = `${READBACK_FORMATTER.format(new Date(eqlist.dateOut.replace(' ', 'T')))} — ${READBACK_FORMATTER.format(new Date(eqlist.dateBack.replace(' ', 'T')))}`;
-      existingLinesBodyEl.innerHTML = '';
-      for (const line of state.loadedJob.existingLines) {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td>${escapeHtml(line.name || '')} <span class="meta">#${line.typeId}</span></td><td>${line.qty}</td>`;
-        existingLinesBodyEl.appendChild(tr);
-      }
+      renderExistingLinesTree(state.loadedJob);
       jobLoadedInfoEl.classList.remove('hidden');
       updateSubmitState();
     } catch (err) {
@@ -225,8 +323,14 @@
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'Не удалось загрузить каталог');
       state.catalog = data.items || [];
+      state.catalogById = new Map(state.catalog.map((item) => [item.typeId, item]));
       state.catalogLoaded = true;
       loadStatusEl.textContent = `Каталог загружен: ${state.catalog.length} позиций.`;
+      // Existing-job lines may have rendered before the catalog finished
+      // loading (type badges/component nesting need it) - re-render now.
+      if (state.loadedJob) {
+        renderExistingLinesTree(state.loadedJob);
+      }
     } catch (err) {
       loadStatusEl.textContent = `Ошибка загрузки каталога: ${err.message}`;
     }

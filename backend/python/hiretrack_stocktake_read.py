@@ -210,11 +210,23 @@ JOB_LOOKUP_EQLISTS_QUERY = """
 """
 
 JOB_LOOKUP_SORT_QUERY = """
-    SELECT S."Type" AS EquipmentTypeId, H."Description" AS EquipmentName, S."Quant"
+    SELECT S."Type" AS EquipmentTypeId, H."Description" AS EquipmentName, S."Quant",
+        S."sectionID" AS SectionId, CAST(H."EquipmentType" AS SMALLINT) AS EquipmentType
     FROM "Sort" S
     LEFT JOIN "Hetype" H ON H."Type" = S."Type"
     WHERE S."Eqlno" = ?
     ORDER BY S."SortOrder"
+"""
+
+# Sections group an Eqlist's lines for display (Sort.sectionID -> EqSections.idx).
+# Nested view: Section -> its lines -> (for Composite/Alias lines) their
+# components, per the equipment_catalog COMPOSIT data already synced for the
+# catalog cache - see EQUIPMENT_CATALOG_MATCH_BLUEPRINT.md.
+JOB_LOOKUP_SECTIONS_QUERY = """
+    SELECT "idx" AS SectionId, "SectionText", "sortOrder"
+    FROM "EqSections"
+    WHERE "xEqlno" = ?
+    ORDER BY "sortOrder"
 """
 
 
@@ -372,6 +384,8 @@ def read_job_lookup(cursor, job_ref):
     for eqlist in eqlists:
         cursor.execute(JOB_LOOKUP_SORT_QUERY, eqlist["Eql_no"])
         eqlist["lines"] = rows_as_dicts(cursor)
+        cursor.execute(JOB_LOOKUP_SECTIONS_QUERY, eqlist["Eql_no"])
+        eqlist["sections"] = rows_as_dicts(cursor)
 
     job["eqlists"] = eqlists
     return job

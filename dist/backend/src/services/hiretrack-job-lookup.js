@@ -65,10 +65,17 @@ async function lookupHiretrackJob(jobRef) {
             dateBack,
             clientId: eqlist.Client_no ?? null,
             clientName: eqlist.Client_name ?? null,
+            sections: eqlist.sections.map((section) => ({
+                sectionId: section.SectionId,
+                sectionText: section.SectionText ?? null,
+                sortOrder: section.sortOrder ?? null,
+            })),
             lines: eqlist.lines.map((line) => ({
                 typeId: line.EquipmentTypeId,
                 name: line.EquipmentName ?? null,
                 qty: line.Quant,
+                sectionId: line.SectionId ?? null,
+                equipmentType: line.EquipmentType ?? null,
             })),
         });
     }
