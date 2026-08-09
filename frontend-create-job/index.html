@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Создание работы — HireTrack NX</title>
+  <link rel="stylesheet" href="styles.css?v=1" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Создание работы</div>
+    <a class="back-link" href="/">← Панель управления</a>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Работа</h2>
+      <div class="field-row">
+        <label class="field">
+          Название работы
+          <input type="text" id="job-name" maxlength="50" placeholder="Например: Концерт — Иванов" />
+        </label>
+      </div>
+      <div class="field-row">
+        <label class="field">
+          Дата и время начала
+          <input type="datetime-local" id="date-from" />
+        </label>
+        <label class="field">
+          Дата и время окончания
+          <input type="datetime-local" id="date-to" />
+        </label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Клиент</h2>
+      <div class="client-picker">
+        <input type="text" id="client-search" placeholder="Начните вводить название компании…" autocomplete="off" />
+        <div id="client-results" class="client-results hidden"></div>
+        <div id="client-selected" class="client-selected hidden">
+          Выбран клиент: <strong id="client-selected-name"></strong>
+          <button type="button" id="client-clear">Изменить</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Оборудование</h2>
+      <div class="equipment-picker">
+        <input type="text" id="equipment-search" placeholder="Поиск по названию, категории, коду…" autocomplete="off" />
+        <div id="equipment-results" class="equipment-results hidden"></div>
+      </div>
+      <div id="load-status" class="load-status"></div>
+      <table class="lines-table" id="lines-table">
+        <thead>
+          <tr>
+            <th>Оборудование</th>
+            <th>Кол-во</th>
+            <th>Доступность</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="lines-body"></tbody>
+      </table>
+      <p id="lines-empty" class="empty-hint">Пока нет позиций — найдите оборудование выше и добавьте.</p>
+    </section>
+
+    <section class="card submit-card">
+      <button type="button" id="submit-btn" disabled>Создать работу в HireTrack</button>
+      <div id="result" class="result hidden"></div>
+    </section>
+  </main>
+
+  <script src="app.js?v=1"></script>
+</body>
+</html>

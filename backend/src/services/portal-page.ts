@@ -57,6 +57,11 @@ export function renderHiretrackPortalPage(): string {
         <div class="section-body"><h2>Назначение персонала</h2><p>Job → Фаза → Позиция с назначением людей прямо из HireTrack NX.</p><div class="facts"><span>Job/фаза/позиция по дням</span><span>Поиск и подтверждение назначения</span><span>Пишет напрямую в HireTrack</span></div></div>
         <span class="open">Открыть Crew Bookings →</span>
       </a>
+      <a class="section" href="/create-job/">
+        <div class="section-head"><strong>Создание работы</strong><span class="code">BOOKING</span></div>
+        <div class="section-body"><h2>Новая работа в HireTrack</h2><p>Клиент, даты, оборудование с проверкой реальной доступности — и сразу Job + Eqlist.</p><div class="facts"><span>Поиск клиента и оборудования</span><span>Доступность по датам из HireTrack</span><span>Пишет напрямую в HireTrack</span></div></div>
+        <span class="open">Открыть создание работы →</span>
+      </a>
     </div>
   </main>
 </body>

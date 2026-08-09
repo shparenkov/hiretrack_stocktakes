@@ -1,0 +1,215 @@
+:root {
+  --navy: #173f72;
+  --blue: #245c9b;
+  --line: #aeb9c6;
+  --canvas: #eef2f5;
+  --muted: #687485;
+  --green: #2d6b45;
+  --red: #932b20;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: #18212b;
+  background: var(--canvas);
+  font: 13px/1.4 "Arial Narrow", "Segoe UI", Arial, sans-serif;
+}
+
+.topbar {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 16px;
+  color: #fff;
+  background: var(--navy);
+  border-bottom: 3px solid #0e2c51;
+}
+
+.brand { font-size: 18px; font-weight: 700; }
+.back-link { color: #c9d8e9; text-decoration: none; font-size: 13px; }
+.back-link:hover { color: #fff; }
+
+main {
+  width: min(900px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 28px 0 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.card {
+  background: #fff;
+  border: 1px solid var(--line);
+  padding: 20px 22px;
+}
+
+.card h2 {
+  margin: 0 0 14px;
+  color: var(--navy);
+  font-size: 16px;
+}
+
+.field-row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-weight: 600;
+  color: #3f4c5b;
+  flex: 1;
+  min-width: 220px;
+}
+
+.field input {
+  font: 14px Arial, sans-serif;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  color: #18212b;
+}
+
+.field input:focus { outline: 2px solid var(--blue); outline-offset: -1px; }
+
+.client-picker, .equipment-picker { position: relative; }
+
+#client-search, #equipment-search {
+  width: 100%;
+  font: 14px Arial, sans-serif;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+}
+
+#client-search:focus, #equipment-search:focus { outline: 2px solid var(--blue); outline-offset: -1px; }
+
+.client-results, .equipment-results {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid var(--line);
+  box-shadow: 0 6px 14px rgba(0,0,0,.12);
+}
+
+.hidden { display: none !important; }
+
+.result-row {
+  padding: 9px 11px;
+  cursor: pointer;
+  border-bottom: 1px solid #eef2f5;
+}
+
+.result-row:hover { background: #eef4fb; }
+.result-row .name { font-weight: 700; color: #18212b; }
+.result-row .meta { color: var(--muted); font-size: 12px; }
+
+.client-selected {
+  margin-top: 10px;
+  padding: 9px 11px;
+  background: #eef8f0;
+  border: 1px solid #b6dcc2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.client-selected button {
+  margin-left: auto;
+  border: 1px solid var(--line);
+  background: #fff;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.load-status {
+  margin: 8px 0;
+  color: var(--muted);
+  font-size: 12px;
+  min-height: 16px;
+}
+
+.lines-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 12px;
+}
+
+.lines-table th {
+  text-align: left;
+  padding: 8px 10px;
+  background: var(--blue);
+  color: #fff;
+  font-size: 12px;
+}
+
+.lines-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #eef2f5;
+  vertical-align: middle;
+}
+
+.lines-table input[type="number"] {
+  width: 70px;
+  padding: 5px 6px;
+  border: 1px solid var(--line);
+  font: 13px Arial, sans-serif;
+}
+
+.remove-line {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--red);
+  cursor: pointer;
+  padding: 4px 9px;
+}
+
+.availability-badge {
+  font-weight: 700;
+  padding: 2px 8px;
+  display: inline-block;
+}
+
+.availability-badge.ok { color: var(--green); }
+.availability-badge.low { color: #a15b12; }
+.availability-badge.none { color: var(--red); }
+.availability-badge.pending { color: var(--muted); font-weight: 400; }
+
+.empty-hint { color: var(--muted); margin: 12px 0 0; }
+
+.submit-card { display: flex; flex-direction: column; gap: 12px; align-items: flex-start; }
+
+#submit-btn {
+  padding: 11px 22px;
+  border: 0;
+  background: var(--navy);
+  color: #fff;
+  font: 700 14px Arial, sans-serif;
+  cursor: pointer;
+}
+
+#submit-btn:disabled { background: #9aa7b6; cursor: not-allowed; }
+#submit-btn:not(:disabled):hover { background: var(--blue); }
+
+.result {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  width: 100%;
+}
+
+.result.success { background: #eef8f0; border-color: #b6dcc2; color: #205234; }
+.result.error { background: #fbecea; border-color: #e6b3ab; color: var(--red); }
+
+.result a { color: inherit; font-weight: 700; }

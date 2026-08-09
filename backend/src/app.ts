@@ -3,8 +3,10 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import { crewBookingsRouter } from './routes/crew-bookings';
+import { createJobRouter } from './routes/create-job';
 import { ticketsRouter } from './routes/tickets';
 import { installCrewBookingsPinAuth } from './services/crew-bookings-pin-auth';
+import { installCreateJobPinAuth } from './services/create-job-pin-auth';
 import {
   renderBitrixTicketsAppShell,
   renderFrontendBuildMissingPage,
@@ -51,6 +53,15 @@ export function createApp() {
     res.sendFile(path.join(crewBookingsFrontendPath, 'index.html'));
   });
   app.use('/crew-bookings', express.static(crewBookingsFrontendPath, { index: false, redirect: false }));
+
+  installCreateJobPinAuth(app);
+  app.use('/api/create-job', createJobRouter);
+
+  const createJobFrontendPath = path.resolve(process.cwd(), 'frontend-create-job');
+  app.get('/create-job/', (_req, res) => {
+    res.sendFile(path.join(createJobFrontendPath, 'index.html'));
+  });
+  app.use('/create-job', express.static(createJobFrontendPath, { index: false, redirect: false }));
 
   app.all(['/bitrix/tickets/app', '/bitrix/tickets/install'], (_req, res) => {
     const uiPath = '/bitrix/tickets/ui/';

@@ -161,6 +161,22 @@ EQUIPMENT_CATALOG_WATERMARK_QUERY = """
 # practice) so the first delta call still has a lower bound to compare against.
 FALLBACK_WATERMARK = "1900-01-01 00:00:00"
 
+# Company search for the "create-job" page's client picker - api_v2's
+# initialise_new_booking needs a real hiretrack_client_id (Company.CompanyCounter),
+# which must come from the user, not be guessed. Excludes archived/on-hold
+# companies since those shouldn't be picked for a new booking.
+COMPANY_SEARCH_QUERY = """
+    SELECT TOP 20
+        "CompanyCounter" AS CompanyId,
+        "CompanyName",
+        "Town"
+    FROM "Company"
+    WHERE "CompanyName" LIKE ?
+        AND COALESCE("Archived", FALSE) = FALSE
+        AND COALESCE("Hold", FALSE) = FALSE
+    ORDER BY "CompanyName"
+"""
+
 
 def serialize(value):
     if isinstance(value, (datetime, date)):
@@ -283,6 +299,14 @@ def read_equipment_catalog_changes(cursor, since):
     }
 
 
+def read_company_search(cursor, query_text):
+    if not query_text or not str(query_text).strip():
+        return []
+    like_pattern = f"%{str(query_text).strip()}%"
+    cursor.execute(COMPANY_SEARCH_QUERY, like_pattern)
+    return rows_as_dicts(cursor)
+
+
 def main():
     request = json.load(sys.stdin)
     operation = request.get("operation")
@@ -300,6 +324,8 @@ def main():
             result = read_equipment_catalog_full(cursor)
         elif operation == "equipment-catalog-changes":
             result = read_equipment_catalog_changes(cursor, request.get("since"))
+        elif operation == "company-search":
+            result = read_company_search(cursor, request.get("query"))
         else:
             raise ValueError(f"Unsupported HireTrack read operation: {operation}")
         json.dump({"ok": True, "result": result}, sys.stdout, ensure_ascii=False)

@@ -9,8 +9,10 @@ const express_1 = __importDefault(require("express"));
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const crew_bookings_1 = require("./routes/crew-bookings");
+const create_job_1 = require("./routes/create-job");
 const tickets_1 = require("./routes/tickets");
 const crew_bookings_pin_auth_1 = require("./services/crew-bookings-pin-auth");
+const create_job_pin_auth_1 = require("./services/create-job-pin-auth");
 const bitrix_ticket_app_1 = require("./services/bitrix-ticket-app");
 const password_auth_1 = require("./services/password-auth");
 const portal_page_1 = require("./services/portal-page");
@@ -44,6 +46,13 @@ function createApp() {
         res.sendFile(path_1.default.join(crewBookingsFrontendPath, 'index.html'));
     });
     app.use('/crew-bookings', express_1.default.static(crewBookingsFrontendPath, { index: false, redirect: false }));
+    (0, create_job_pin_auth_1.installCreateJobPinAuth)(app);
+    app.use('/api/create-job', create_job_1.createJobRouter);
+    const createJobFrontendPath = path_1.default.resolve(process.cwd(), 'frontend-create-job');
+    app.get('/create-job/', (_req, res) => {
+        res.sendFile(path_1.default.join(createJobFrontendPath, 'index.html'));
+    });
+    app.use('/create-job', express_1.default.static(createJobFrontendPath, { index: false, redirect: false }));
     app.all(['/bitrix/tickets/app', '/bitrix/tickets/install'], (_req, res) => {
         const uiPath = '/bitrix/tickets/ui/';
         res.type('html').send((0, bitrix_ticket_app_1.renderBitrixTicketsAppShell)({ uiPath }));
