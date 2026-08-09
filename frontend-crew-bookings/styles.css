@@ -53,6 +53,7 @@ body { height: 100vh; display: flex; flex-direction: column; }
   font-size: 12px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums;
 }
 .window-presets { display: flex; gap: 4px; }
+.nav-btn { padding: 4px 8px !important; font-weight: 700; line-height: 1; }
 .preset-btn.active { background: var(--purple); color: #fff; border-color: var(--purple); }
 
 .toolbar-filters { border-top: 1px solid var(--border); gap: 16px; align-items: flex-end; }

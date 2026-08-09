@@ -559,6 +559,18 @@ windowStartInput.addEventListener("change", () => {
 document.getElementById("window-today").addEventListener("click", () => {
   applyWindow(todayStr(), DAY_COUNT);
 });
+document.getElementById("window-back-week").addEventListener("click", () => {
+  applyWindow(fmt(addDays(start, -7)), DAY_COUNT);
+});
+document.getElementById("window-back-day").addEventListener("click", () => {
+  applyWindow(fmt(addDays(start, -1)), DAY_COUNT);
+});
+document.getElementById("window-fwd-day").addEventListener("click", () => {
+  applyWindow(fmt(addDays(start, 1)), DAY_COUNT);
+});
+document.getElementById("window-fwd-week").addEventListener("click", () => {
+  applyWindow(fmt(addDays(start, 7)), DAY_COUNT);
+});
 presetButtons.forEach((btn) => {
   btn.addEventListener("click", () => applyWindow(windowStartInput.value || fmt(start), Number(btn.dataset.days)));
 });

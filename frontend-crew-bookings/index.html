@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <title>Crew Bookings — HireTrack NX</title>
-  <link rel="stylesheet" href="styles.css?v=3" />
+  <link rel="stylesheet" href="styles.css?v=4" />
 </head>
 <body>
   <div class="toolbar">
@@ -16,8 +16,12 @@
   <div class="toolbar toolbar-window">
     <label class="window-field">Начальная дата
       <span class="window-field-row">
+        <button type="button" id="window-back-week" class="nav-btn" title="Назад на неделю">&laquo;</button>
+        <button type="button" id="window-back-day" class="nav-btn" title="Назад на день">&lsaquo;</button>
         <input type="date" id="window-start" />
         <span id="window-start-display" class="date-display"></span>
+        <button type="button" id="window-fwd-day" class="nav-btn" title="Вперёд на день">&rsaquo;</button>
+        <button type="button" id="window-fwd-week" class="nav-btn" title="Вперёд на неделю">&raquo;</button>
       </span>
     </label>
     <button id="window-today">Сегодня</button>
@@ -59,6 +63,6 @@
   <div class="gantt-scroll">
     <div id="gantt"></div>
   </div>
-  <script src="app.js?v=2"></script>
+  <script src="app.js?v=3"></script>
 </body>
 </html>
