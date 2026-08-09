@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+from datetime import datetime
 
 import pyodbc
 
@@ -11,11 +12,14 @@ import pyodbc
 #
 # Writes go through HireTrack's own stored function CreateNewNote(...) plus a
 # plain insert into notebookdetails - the same pattern HireTrack documents for
-# its Zapier integration. This intentionally does NOT touch EQLISTS/Sort (the
-# live Job equipment list): that table is entangled with pricing, discounts
-# and invoicing, and every safe write path for it is a heavyweight stored
-# procedure meant to be driven from HireTrack NX itself. See
-# EQUIPMENT_CATALOG_MATCH_BLUEPRINT.md before changing what this script writes to.
+# its Zapier integration. This deliberately avoids EQLISTS/Sort in general
+# (that table is entangled with pricing, discounts and invoicing, and every
+# safe write path for it is a heavyweight stored procedure meant to be driven
+# from HireTrack NX itself) - the one narrow exception is
+# update-eqlist-dates, which only touches Eqlists.DateOut/DateBack (plain
+# date columns, no pricing) to work around a confirmed api_v2 bug - see that
+# function's own comment. See EQUIPMENT_CATALOG_MATCH_BLUEPRINT.md before
+# changing what this script writes to.
 
 DSN = os.environ.get("HIRETRACK_WRITE_ODBC_DSN")
 QUERY_TIMEOUT = int(os.environ.get("HIRETRACK_WRITE_ODBC_QUERY_TIMEOUT", "60"))
@@ -100,6 +104,34 @@ def add_note_line(cursor, params):
     return {"noteId": note_id, "eqtype": eqtype, "qty": qty, "priceEach": price_each}
 
 
+def update_eqlist_dates(cursor, params):
+    # Corrects a confirmed api_v2 bug: initialise_new_booking's
+    # availability_datetime_from/to never reach CreateNewEqlist's
+    # aStartDate/aEndDate params, so it always falls back to its own
+    # past-date safety clamp (DateOut=now, DateBack=tomorrow 08:00) instead
+    # of the requested range - which then makes every append_to_booking call
+    # fail with ValidationResult 6 (bvrBookingDatesNEQListDates), since the
+    # appended line's dates don't match the Eqlist's actual (wrong) header
+    # dates. This sets exactly what CreateNewEqlist should have set given
+    # correct params - two plain date columns, no pricing/Sort/invoicing
+    # fields touched. See EQUIPMENT_CATALOG_MATCH_BLUEPRINT.md.
+    eqlist_id = params.get("eqlistId")
+    date_from = params.get("dateFrom")
+    date_to = params.get("dateTo")
+    if eqlist_id is None or not date_from or not date_to:
+        raise ValueError("update-eqlist-dates requires 'eqlistId', 'dateFrom' and 'dateTo'")
+
+    # NexusDB/pyodbc quirk (documented in DB_QUERY_REFERENCE.md): binding a
+    # bare date-literal string to a TIMESTAMP column fails ("Could not
+    # convert variant of type (String) into type (Double)") - must bind a
+    # real datetime object instead. Confirmed live.
+    cursor.execute(
+        'UPDATE "Eqlists" SET "DateOut" = ?, "DateBack" = ? WHERE "Eql_no" = ?',
+        datetime.fromisoformat(str(date_from)), datetime.fromisoformat(str(date_to)), eqlist_id,
+    )
+    return {"eqlistId": eqlist_id, "dateFrom": date_from, "dateTo": date_to}
+
+
 def main():
     if not DSN:
         raise ValueError("HIRETRACK_WRITE_ODBC_DSN is not configured")
@@ -118,6 +150,8 @@ def main():
             result = create_note(cursor, request)
         elif operation == "add-note-line":
             result = add_note_line(cursor, request)
+        elif operation == "update-eqlist-dates":
+            result = update_eqlist_dates(cursor, request)
         else:
             raise ValueError(f"Unsupported HireTrack write operation: {operation}")
         json.dump({"ok": True, "result": result}, sys.stdout, ensure_ascii=False)

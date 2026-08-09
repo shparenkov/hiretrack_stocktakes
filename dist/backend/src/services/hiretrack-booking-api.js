@@ -12,6 +12,7 @@ const path_1 = __importDefault(require("path"));
 const https_1 = __importDefault(require("https"));
 const http_1 = __importDefault(require("http"));
 const url_1 = require("url");
+const hiretrack_odbc_write_1 = require("./hiretrack-odbc-write");
 // Confirmed live against production (2026-08-09): warehouse 1 = "Moscow" (IsDefault),
 // pricelist 6 = "SA Rental Scheme", user 1 = "HireTrack_Admin" (SystemAdmin), client 2 =
 // "Test client". These are fallbacks only -- override via hiretrack.config.json's
@@ -182,6 +183,18 @@ async function initialiseHiretrackBooking(input) {
         writeResult,
     };
 }
+// Corrects Eqlists.DateOut/DateBack for a confirmed api_v2 bug - see the
+// comment inside createHiretrackBooking for the full mechanism. Only touches
+// the two plain date columns (via the writable DSN, same bridge as the Note
+// write path) - no pricing/Sort/invoicing fields, unlike a raw Sort insert.
+async function updateHiretrackEqlistDates(eqlistId, dateFrom, dateTo) {
+    await (0, hiretrack_odbc_write_1.runHiretrackOdbcWrite)({
+        operation: 'update-eqlist-dates',
+        eqlistId,
+        dateFrom,
+        dateTo,
+    });
+}
 // Batches initialise_new_booking (creates the Job+Eqlist shell) +
 // append_to_booking (every line, including the "first" one) into one call,
 // mirroring createEquipmentNoteWithLines's shape. Callers (the rider-matching
@@ -217,6 +230,13 @@ async function createHiretrackBooking(input) {
     if (!init.jobId || !init.eqlistId) {
         throw new Error(`HireTrack initialise_new_booking did not return a JobID/EqlistID: ${JSON.stringify(init)}`);
     }
+    // Confirmed live 2026-08-09: initialise_new_booking's availability_datetime_from/to
+    // never reach CreateNewEqlist's aStartDate/aEndDate - it always falls back to that
+    // function's own past-date safety clamp (DateOut=now, DateBack=tomorrow 08:00).
+    // Every append_to_booking call then fails with ValidationResult 6
+    // (bvrBookingDatesNEQListDates) because the line's dates don't match the Eqlist's
+    // actual (wrong) header dates. Correct it directly before appending anything.
+    await updateHiretrackEqlistDates(init.eqlistId, input.dateFrom, input.dateTo);
     let linesWritten = 0;
     const failedLines = [];
     // Sequential on purpose, same reasoning as the Note write path: rider line
