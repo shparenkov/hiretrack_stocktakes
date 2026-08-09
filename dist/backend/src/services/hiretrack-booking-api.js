@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.checkHiretrackAvailability = checkHiretrackAvailability;
 exports.initialiseHiretrackBooking = initialiseHiretrackBooking;
+exports.updateHiretrackEqlistDates = updateHiretrackEqlistDates;
 exports.createHiretrackBooking = createHiretrackBooking;
 exports.appendLinesToExistingBooking = appendLinesToExistingBooking;
 exports.appendToHiretrackBooking = appendToHiretrackBooking;
@@ -188,6 +189,13 @@ async function initialiseHiretrackBooking(input) {
 // comment inside createHiretrackBooking for the full mechanism. Only touches
 // the two plain date columns (via the writable DSN, same bridge as the Note
 // write path) - no pricing/Sort/invoicing fields, unlike a raw Sort insert.
+// Exported: also used by hiretrack-job-lookup.ts to self-heal Eqlists whose
+// DateOut/DateBack carry sub-second precision (confirmed live 2026-08-09:
+// append_to_booking's date-match rejects ANY stored value with a fractional
+// second, regardless of what precision the request itself uses - only
+// fixing the stored value works). Legacy jobs created before this whole fix
+// was deployed got such a value from CreateNewEqlist's CURRENT_TIMESTAMP
+// clamp, which carries full microsecond precision.
 async function updateHiretrackEqlistDates(eqlistId, dateFrom, dateTo) {
     await (0, hiretrack_odbc_write_1.runHiretrackOdbcWrite)({
         operation: 'update-eqlist-dates',

@@ -1,4 +1,5 @@
 import { runHiretrackOdbcRead } from './hiretrack-odbc-read';
+import { updateHiretrackEqlistDates } from './hiretrack-booking-api';
 
 // "Open an existing job" lookup for the create-job page - looks up a Job by
 // its ref (e.g. "Р7169МСК"), its Eqlist(s) (with their real DateOut/DateBack
@@ -81,6 +82,16 @@ export async function searchHiretrackJobs(query: string): Promise<HiretrackJobSe
   }));
 }
 
+// Drops any fractional-second component and normalizes to a bare space
+// separator ("YYYY-MM-DD HH:MM:SS") - the ODBC bridge serializes datetimes
+// via Python's .isoformat(), which is "T"-separated and includes
+// microseconds when present. String-only on purpose (no Date parsing) to
+// avoid any timezone reinterpretation - this machine and the DB share one
+// timezone, so the wall-clock digits themselves are exactly what's needed.
+function normalizeHiretrackDateTime(raw: string): string {
+  return raw.split('.')[0].replace('T', ' ');
+}
+
 export async function lookupHiretrackJob(jobRef: string): Promise<HiretrackJobLookupResult | null> {
   const trimmed = jobRef.trim();
   if (!trimmed) {
@@ -96,15 +107,27 @@ export async function lookupHiretrackJob(jobRef: string): Promise<HiretrackJobLo
     return null;
   }
 
-  return {
-    jobNo: raw.jobNo,
-    jobRef: raw.jobRef,
-    name: raw.name ?? null,
-    eqlists: raw.eqlists.map((eqlist) => ({
+  const eqlists: HiretrackJobLookupEqlist[] = [];
+  for (const eqlist of raw.eqlists) {
+    const hadFraction = eqlist.DateOut.includes('.') || eqlist.DateBack.includes('.');
+    const dateOut = normalizeHiretrackDateTime(eqlist.DateOut);
+    const dateBack = normalizeHiretrackDateTime(eqlist.DateBack);
+
+    if (hadFraction) {
+      // Self-heal: confirmed live that append_to_booking rejects ANY stored
+      // DateOut/DateBack with sub-second precision, no matter what precision
+      // the request itself uses - legacy jobs created before the
+      // Eqlist-dates fix was deployed got such a value from
+      // CreateNewEqlist's CURRENT_TIMESTAMP clamp. Fix it in place the first
+      // time the job is opened, so appends to it work from here on.
+      await updateHiretrackEqlistDates(eqlist.Eql_no, dateOut, dateBack);
+    }
+
+    eqlists.push({
       eqlistId: eqlist.Eql_no,
       eqlistName: eqlist.Eql_name ?? null,
-      dateOut: eqlist.DateOut,
-      dateBack: eqlist.DateBack,
+      dateOut,
+      dateBack,
       clientId: eqlist.Client_no ?? null,
       clientName: eqlist.Client_name ?? null,
       lines: eqlist.lines.map((line) => ({
@@ -112,6 +135,13 @@ export async function lookupHiretrackJob(jobRef: string): Promise<HiretrackJobLo
         name: line.EquipmentName ?? null,
         qty: line.Quant,
       })),
-    })),
+    });
+  }
+
+  return {
+    jobNo: raw.jobNo,
+    jobRef: raw.jobRef,
+    name: raw.name ?? null,
+    eqlists,
   };
 }

@@ -292,7 +292,14 @@ export interface CreateBookingResult {
 // comment inside createHiretrackBooking for the full mechanism. Only touches
 // the two plain date columns (via the writable DSN, same bridge as the Note
 // write path) - no pricing/Sort/invoicing fields, unlike a raw Sort insert.
-async function updateHiretrackEqlistDates(eqlistId: number, dateFrom: string, dateTo: string): Promise<void> {
+// Exported: also used by hiretrack-job-lookup.ts to self-heal Eqlists whose
+// DateOut/DateBack carry sub-second precision (confirmed live 2026-08-09:
+// append_to_booking's date-match rejects ANY stored value with a fractional
+// second, regardless of what precision the request itself uses - only
+// fixing the stored value works). Legacy jobs created before this whole fix
+// was deployed got such a value from CreateNewEqlist's CURRENT_TIMESTAMP
+// clamp, which carries full microsecond precision.
+export async function updateHiretrackEqlistDates(eqlistId: number, dateFrom: string, dateTo: string): Promise<void> {
   await runHiretrackOdbcWrite({
     operation: 'update-eqlist-dates',
     eqlistId,
