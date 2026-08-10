@@ -173,6 +173,7 @@ createJobRouter.post('/jobs/:jobRef/lines', async (req: Request, res: Response) 
 const changeQuantitySchema = z.object({
   quantity: z.coerce.number().positive(),
   clientId: z.coerce.number().int().positive(),
+  eqlistId: z.coerce.number().int().positive(),
   userId: z.coerce.number().int().optional(),
 });
 

@@ -4,7 +4,7 @@ import https from 'https';
 import http from 'http';
 import { URL } from 'url';
 import { runHiretrackOdbcWrite } from './hiretrack-odbc-write';
-import { setHiretrackLineSection } from './hiretrack-equipment-note-write';
+import { setHiretrackLineSection, forceHiretrackLineQuantity } from './hiretrack-equipment-note-write';
 
 interface HiretrackConfig {
   hiretrack?: {
@@ -601,13 +601,26 @@ export async function appendToHiretrackBooking(input: AppendToBookingInput): Pro
   // for the requested dates/qty) - only ValidationResult/BookingQty reveal
   // that. Without this check a rejected line was silently counted as written.
   assertBookingSuccess('append_to_booking', row, writeResult);
+  const lineRefId = normalizeInt(row.LineRefID);
+  let bookingQty = normalizeInt(row.BookingQty);
+
+  // HireTrack silently caps bookingQty below the requested quantity when
+  // stock is insufficient instead of rejecting the write (ValidationResult
+  // stays 0) - confirmed live 2026-08-10. Per explicit user instruction,
+  // the persisted quantity must always match what was requested regardless
+  // of availability, so force it directly when HireTrack didn't honor it.
+  if (lineRefId != null && bookingQty != null && bookingQty < input.quantity) {
+    await forceHiretrackLineQuantity(lineRefId, input.eqlistId, input.quantity);
+    bookingQty = input.quantity;
+  }
+
   return {
     typeDescription: (row.TypeDescription as string) ?? null,
-    lineRefId: normalizeInt(row.LineRefID),
+    lineRefId,
     requestedQty: normalizeInt(row.RequestedQty),
     stocklevelForWarehouse: normalizeInt(row.StocklevelForWarehouse),
     availableQty: normalizeInt(row.AvailableQty),
-    bookingQty: normalizeInt(row.BookingQty),
+    bookingQty,
     currencyIso: (row.CurrencyISO as string) ?? null,
     preDiscountPrice: normalizeFloat(row.PreDiscountPrice),
     discountedPrice: normalizeFloat(row.DiscountedPrice),
@@ -620,6 +633,10 @@ export interface ChangeBookingQuantityInput {
   lineRefId: number;
   quantity: number;
   clientId: number;
+  // Needed only for the forceHiretrackLineQuantity fallback below (its
+  // WHERE clause scopes by Eqlno as a safety check) - change_booking_quantity
+  // itself doesn't take an eqlist id, it's keyed by lineref_id alone.
+  eqlistId: number;
   userId?: number;
 }
 
@@ -668,12 +685,22 @@ export async function changeHiretrackBookingQuantity(
   const row = raw[0] as Record<string, unknown>;
   const writeResult = parseWriteResult(row);
   assertBookingSuccess('change_booking_quantity', row, writeResult);
+  let bookingQty = normalizeInt(row.BookingQty);
+
+  // See appendToHiretrackBooking's matching comment - same silent-cap
+  // behavior, same forced override so the persisted quantity always
+  // matches what was requested.
+  if (bookingQty != null && bookingQty < input.quantity) {
+    await forceHiretrackLineQuantity(input.lineRefId, input.eqlistId, input.quantity);
+    bookingQty = input.quantity;
+  }
+
   return {
     typeDescription: (row.TypeDescription as string) ?? null,
     requestedQty: normalizeInt(row.RequestedQty),
     stocklevelForWarehouse: normalizeInt(row.StocklevelForWarehouse),
     availableQty: normalizeInt(row.AvailableQty),
-    bookingQty: normalizeInt(row.BookingQty),
+    bookingQty,
     writeResult,
   };
 }

@@ -217,6 +217,29 @@ def set_line_section(cursor, params):
     return {"lineRefId": lineref_id, "sectionId": section_id, "sortOrder": next_sort_order}
 
 
+def force_line_quantity(cursor, params):
+    lineref_id = params.get("lineRefId")
+    eqlist_id = params.get("eqlistId")
+    quantity = params.get("quantity")
+    if lineref_id is None or eqlist_id is None or quantity is None:
+        raise ValueError("force-line-quantity requires 'lineRefId', 'eqlistId' and 'quantity'")
+
+    # api_v2's change_booking_quantity/append_to_booking silently cap the
+    # persisted Sort.Quant to whatever stock is actually available instead
+    # of rejecting an over-quantity request (ValidationResult stays 0, see
+    # EQUIPMENT_CATALOG_MATCH_BLUEPRINT.md) - there is no api_v2 parameter
+    # to opt out of that cap. Per explicit user instruction, quantity should
+    # always reflect exactly what was requested regardless of stock, so
+    # this overwrites it directly. Plain INTEGER column (confirmed live via
+    # cur.columns()), no CAST/BYTE quirk. Deliberately does NOT touch
+    # Daily/Price/PreDiscount/Discount/InvoicedTotal - those stay priced for
+    # whatever quantity change_booking_quantity/append_to_booking actually
+    # computed, so invoicing for the forced excess is not automatic and may
+    # need manual adjustment in HireTrack NX.
+    cursor.execute('UPDATE "Sort" SET "Quant" = ? WHERE "Lineref" = ? AND "Eqlno" = ?', quantity, lineref_id, eqlist_id)
+    return {"lineRefId": lineref_id, "quantity": quantity}
+
+
 def main():
     if not DSN:
         raise ValueError("HIRETRACK_WRITE_ODBC_DSN is not configured")
@@ -245,6 +268,8 @@ def main():
             result = delete_section(cursor, request)
         elif operation == "set-line-section":
             result = set_line_section(cursor, request)
+        elif operation == "force-line-quantity":
+            result = force_line_quantity(cursor, request)
         else:
             raise ValueError(f"Unsupported HireTrack write operation: {operation}")
         json.dump({"ok": True, "result": result}, sys.stdout, ensure_ascii=False)

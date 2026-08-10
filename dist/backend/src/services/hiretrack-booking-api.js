@@ -396,13 +396,24 @@ async function appendToHiretrackBooking(input) {
     // for the requested dates/qty) - only ValidationResult/BookingQty reveal
     // that. Without this check a rejected line was silently counted as written.
     assertBookingSuccess('append_to_booking', row, writeResult);
+    const lineRefId = normalizeInt(row.LineRefID);
+    let bookingQty = normalizeInt(row.BookingQty);
+    // HireTrack silently caps bookingQty below the requested quantity when
+    // stock is insufficient instead of rejecting the write (ValidationResult
+    // stays 0) - confirmed live 2026-08-10. Per explicit user instruction,
+    // the persisted quantity must always match what was requested regardless
+    // of availability, so force it directly when HireTrack didn't honor it.
+    if (lineRefId != null && bookingQty != null && bookingQty < input.quantity) {
+        await (0, hiretrack_equipment_note_write_1.forceHiretrackLineQuantity)(lineRefId, input.eqlistId, input.quantity);
+        bookingQty = input.quantity;
+    }
     return {
         typeDescription: row.TypeDescription ?? null,
-        lineRefId: normalizeInt(row.LineRefID),
+        lineRefId,
         requestedQty: normalizeInt(row.RequestedQty),
         stocklevelForWarehouse: normalizeInt(row.StocklevelForWarehouse),
         availableQty: normalizeInt(row.AvailableQty),
-        bookingQty: normalizeInt(row.BookingQty),
+        bookingQty,
         currencyIso: row.CurrencyISO ?? null,
         preDiscountPrice: normalizeFloat(row.PreDiscountPrice),
         discountedPrice: normalizeFloat(row.DiscountedPrice),
@@ -434,12 +445,20 @@ async function changeHiretrackBookingQuantity(input) {
     const row = raw[0];
     const writeResult = parseWriteResult(row);
     assertBookingSuccess('change_booking_quantity', row, writeResult);
+    let bookingQty = normalizeInt(row.BookingQty);
+    // See appendToHiretrackBooking's matching comment - same silent-cap
+    // behavior, same forced override so the persisted quantity always
+    // matches what was requested.
+    if (bookingQty != null && bookingQty < input.quantity) {
+        await (0, hiretrack_equipment_note_write_1.forceHiretrackLineQuantity)(input.lineRefId, input.eqlistId, input.quantity);
+        bookingQty = input.quantity;
+    }
     return {
         typeDescription: row.TypeDescription ?? null,
         requestedQty: normalizeInt(row.RequestedQty),
         stocklevelForWarehouse: normalizeInt(row.StocklevelForWarehouse),
         availableQty: normalizeInt(row.AvailableQty),
-        bookingQty: normalizeInt(row.BookingQty),
+        bookingQty,
         writeResult,
     };
 }

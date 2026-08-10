@@ -126,3 +126,26 @@ export async function setHiretrackLineSection(
 ): Promise<SetLineSectionResult> {
   return runHiretrackOdbcWrite<SetLineSectionResult>({ operation: 'set-line-section', lineRefId, eqlistId, sectionId });
 }
+
+// api_v2's change_booking_quantity/append_to_booking silently cap the
+// persisted quantity to whatever stock is actually available instead of
+// rejecting an over-quantity request (ValidationResult stays 0 - confirmed
+// live 2026-08-10, see EQUIPMENT_CATALOG_MATCH_BLUEPRINT.md) - there is no
+// api_v2 parameter to opt out of that cap. Per explicit user instruction,
+// quantity must always reflect exactly what was requested regardless of
+// stock, so callers use this to overwrite it directly whenever the api_v2
+// call's own BookingQty came back lower than requested. Deliberately does
+// NOT touch Daily/Price/PreDiscount/Discount/InvoicedTotal, so pricing for
+// the forced excess is not automatic.
+export interface ForceLineQuantityResult {
+  lineRefId: number;
+  quantity: number;
+}
+
+export async function forceHiretrackLineQuantity(
+  lineRefId: number,
+  eqlistId: number,
+  quantity: number,
+): Promise<ForceLineQuantityResult> {
+  return runHiretrackOdbcWrite<ForceLineQuantityResult>({ operation: 'force-line-quantity', lineRefId, eqlistId, quantity });
+}

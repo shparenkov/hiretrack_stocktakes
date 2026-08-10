@@ -157,6 +157,7 @@ exports.createJobRouter.post('/jobs/:jobRef/lines', async (req, res) => {
 const changeQuantitySchema = zod_1.z.object({
     quantity: zod_1.z.coerce.number().positive(),
     clientId: zod_1.z.coerce.number().int().positive(),
+    eqlistId: zod_1.z.coerce.number().int().positive(),
     userId: zod_1.z.coerce.number().int().optional(),
 });
 exports.createJobRouter.put('/jobs/:jobRef/lines/:lineRefId', async (req, res) => {

@@ -878,7 +878,7 @@
       const res = await fetch(`/api/create-job/jobs/${encodeURIComponent(loadedJob.jobRef)}/lines/${line.lineRefId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ quantity: newQty, clientId: loadedJob.clientId }),
+        body: JSON.stringify({ quantity: newQty, clientId: loadedJob.clientId, eqlistId: loadedJob.eqlistId }),
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'Не удалось изменить количество');
