@@ -264,38 +264,56 @@
         const equipmentType = line.equipmentType ?? catalogItem?.equipmentType ?? 0;
         const components = catalogItem?.components || [];
 
+        const hasComponents = equipmentType > 0 && components.length > 0;
+
         const lineEl = document.createElement('div');
         lineEl.className = 'tree-line';
         lineEl.dataset.lineRefId = String(line.lineRefId);
         lineEl.innerHTML = `
           ${typeBadgeHtml(equipmentType, line.equipmentClass)}
           <input type="number" class="tree-line-qty-input" min="1" step="1" value="${line.qty}">
+          ${hasComponents ? '<button type="button" class="tree-line-toggle" aria-expanded="false">▸</button>' : '<span class="tree-line-toggle-spacer"></span>'}
           <span class="tree-line-name">${escapeHtml(line.name || '')}</span>
           <span class="tree-line-availability pending">…</span>
           <button type="button" class="tree-line-remove" title="Удалить" aria-label="Удалить">×</button>
         `;
         const qtyInput = lineEl.querySelector('.tree-line-qty-input');
-        qtyInput.addEventListener('change', () => {
+        // Debounced so clicking the native number-input stepper arrows
+        // (each click commits its own 'change' event immediately) coalesces
+        // into one save instead of firing a request - and a full tree
+        // rebuild - per click.
+        const commitQtyChange = debounce(() => {
           const newQty = Math.max(1, Math.round(Number(qtyInput.value) || 1));
           qtyInput.value = String(newQty);
           if (newQty !== line.qty) changeExistingLineQuantity(loadedJob, line, newQty);
-        });
+        }, 450);
+        qtyInput.addEventListener('change', commitQtyChange);
         lineEl.querySelector('.tree-line-remove').addEventListener('click', () => removeExistingLine(loadedJob, line));
         sectionEl.appendChild(lineEl);
         refreshExistingLineAvailability(loadedJob, line);
 
-        if (equipmentType > 0 && components.length > 0) {
+        if (hasComponents) {
           const componentsEl = document.createElement('div');
-          componentsEl.className = 'tree-components';
+          componentsEl.className = 'tree-components collapsed';
           for (const component of components) {
             const matchedLine = linesByType.get(component.componentTypeId);
             const qty = matchedLine ? matchedLine.qty : component.quantity;
             const compLineEl = document.createElement('div');
             compLineEl.className = 'tree-component-line';
-            compLineEl.innerHTML = `<span>${escapeHtml(component.componentName || '')}</span><span class="tree-component-qty">×${qty}</span>`;
+            compLineEl.innerHTML = `<span class="tree-component-qty">×${qty}</span><span>${escapeHtml(component.componentName || '')}</span>`;
             componentsEl.appendChild(compLineEl);
           }
           sectionEl.appendChild(componentsEl);
+
+          // Composite/Alias contents are collapsed by default (spoiler) -
+          // toggle button lives on the parent line, componentsEl is its own
+          // sibling node right after it in the DOM.
+          const toggleBtn = lineEl.querySelector('.tree-line-toggle');
+          toggleBtn.addEventListener('click', () => {
+            const isCollapsed = componentsEl.classList.toggle('collapsed');
+            toggleBtn.textContent = isCollapsed ? '▸' : '▾';
+            toggleBtn.setAttribute('aria-expanded', String(!isCollapsed));
+          });
         }
       }
     };
@@ -326,7 +344,14 @@
   // Edit/remove target an already-persisted Sort row (Lineref) - different
   // from the "lines being added" staging list above, which only has local,
   // unsaved state until submit.
+  //
+  // Deliberately does NOT reopen/rebuild the whole tree on success (unlike
+  // removeExistingLine) - the qty input's stepper arrows each fire their own
+  // 'change' event, and a full rebuild per click caused visible flicker and
+  // lost focus. Instead: mutate the line's qty in place and refresh just
+  // this line's own availability badge, so edits feel seamless.
   async function changeExistingLineQuantity(loadedJob, line, newQty) {
+    const previousQty = line.qty;
     jobRefStatusEl.textContent = 'Сохраняем количество…';
     try {
       const res = await fetch(`/api/create-job/jobs/${encodeURIComponent(loadedJob.jobRef)}/lines/${line.lineRefId}`, {
@@ -336,10 +361,13 @@
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'Не удалось изменить количество');
+      line.qty = newQty;
       jobRefStatusEl.textContent = '';
-      await openExistingJob(loadedJob.jobRef);
+      refreshExistingLineAvailability(loadedJob, line);
     } catch (err) {
       jobRefStatusEl.textContent = `Ошибка изменения количества: ${err.message}`;
+      const inputEl = existingLinesTreeEl.querySelector(`.tree-line[data-line-ref-id="${line.lineRefId}"] .tree-line-qty-input`);
+      if (inputEl) inputEl.value = String(previousQty);
     }
   }
 
@@ -366,6 +394,15 @@
   // retrigger each other in a loop the way the staging-table's
   // refreshAllAvailability -> renderLines -> (no refetch, just redraw)
   // pattern relies on.
+  //
+  // check_availability has no notion of "this specific existing line" - it
+  // just reports total-stock-minus-all-overlapping-bookings for the given
+  // type/dates/warehouse, and this line's own already-persisted qty is one
+  // of those overlapping bookings. Left as-is, that self-counts against the
+  // line being edited (increasing its own qty would look blocked by stock
+  // the line already holds). Adding the line's current qty back in gives
+  // the real headroom for growing THIS line - how many more units could be
+  // requested, on top of what's already reserved for this job.
   async function refreshExistingLineAvailability(loadedJob, line) {
     const badgeEl = () => existingLinesTreeEl.querySelector(`.tree-line[data-line-ref-id="${line.lineRefId}"] .tree-line-availability`);
     try {
@@ -378,12 +415,16 @@
       const res = await fetch(`/api/create-job/availability?${params.toString()}`);
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'Ошибка проверки доступности');
-      const availableQty = data.availableQty ?? 0;
+      const rawAvailableQty = data.availableQty ?? 0;
       const stocklevelForWarehouse = data.stocklevelForWarehouse ?? 0;
+      // effective = free stock elsewhere + what this line already holds.
+      // rawAvailableQty is what's left to grow into once this line's own
+      // reservation is excluded from the comparison.
+      const effectiveAvailableQty = rawAvailableQty + line.qty;
       const el = badgeEl();
       if (!el) return;
-      el.textContent = `${availableQty} / ${stocklevelForWarehouse}`;
-      el.className = 'tree-line-availability ' + (availableQty <= 0 ? 'none' : availableQty < line.qty ? 'low' : 'ok');
+      el.textContent = `${effectiveAvailableQty} / ${stocklevelForWarehouse}`;
+      el.className = 'tree-line-availability ' + (effectiveAvailableQty <= 0 ? 'none' : rawAvailableQty <= 0 ? 'low' : 'ok');
     } catch (err) {
       const el = badgeEl();
       if (!el) return;

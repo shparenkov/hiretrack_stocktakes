@@ -277,6 +277,19 @@ main {
   font: 13px Arial, sans-serif;
 }
 
+.tree-line-toggle {
+  width: 16px;
+  border: none;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0;
+  font-size: 11px;
+  text-align: center;
+}
+
+.tree-line-toggle-spacer { width: 16px; display: inline-block; }
+
 .tree-line-availability {
   font: 700 12px Arial, sans-serif;
   min-width: 60px;
@@ -314,6 +327,7 @@ main {
 .type-badge.consumable { background: #c2185b; color: #fff; }
 
 .tree-components { padding-left: 44px; background: #fbfcfd; }
+.tree-components.collapsed { display: none; }
 
 .tree-component-line {
   display: flex;
@@ -325,7 +339,7 @@ main {
 }
 
 .tree-component-line::before { content: '↳'; }
-.tree-component-qty { margin-left: auto; font-weight: 700; }
+.tree-component-qty { font-weight: 700; min-width: 26px; }
 
 .tree-empty { padding: 10px; color: var(--muted); }
 
