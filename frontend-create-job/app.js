@@ -347,12 +347,62 @@
     return `<span class="type-badge ${info.cls}">${info.letter}</span>`;
   }
 
+  // For each Composite/Alias line in `sectionLines`, tries to identify which
+  // (if any) sibling line in the same section is confidently ITS OWN real
+  // component row - HireTrack has no DB-level link between a Composite's own
+  // Sort row and its component rows (confirmed against db.sql's Sort schema),
+  // so the only usable signal is an exact quantity match: recipe quantity ×
+  // this composite's own booked qty. Live-checked against 183 real type-623
+  // bookings on production - 175 have exactly one such match per component
+  // type (2026-08-11).
+  //
+  // A section can genuinely contain more than one real Sort row of the same
+  // equipment type - e.g. one that's this composite's true component plus an
+  // unrelated standalone booking of the same type. The previous version kept
+  // a single Map<typeId, line> (last-write-wins) and hid EVERY line of an
+  // absorbed type, so with two same-type lines present it would show an
+  // arbitrary (often wrong) quantity and silently drop the other line from
+  // the tree entirely - reported as both "composite shows the wrong
+  // quantity" and "deleting one of two identical lines removes both" (same
+  // root cause). Ambiguous cases (no exact match) now deliberately fall back
+  // to the catalog recipe's own numbers and leave every real line of that
+  // type visible as its own row, rather than guessing wrong and hiding data.
+  function computeComponentMatches(sectionLines) {
+    const linesByType = new Map();
+    for (const line of sectionLines) {
+      const list = linesByType.get(line.typeId) || [];
+      list.push(line);
+      linesByType.set(line.typeId, list);
+    }
+
+    const claimedLines = new Set();
+    const matchesByLineRefId = new Map();
+    for (const line of sectionLines) {
+      const catalogItem = state.catalogById.get(line.typeId);
+      const equipmentType = line.equipmentType ?? catalogItem?.equipmentType ?? 0;
+      if (equipmentType === 0) continue;
+      const matches = new Map();
+      for (const component of catalogItem?.components || []) {
+        const expectedQty = component.quantity * (line.qty || 1);
+        const candidates = linesByType.get(component.componentTypeId) || [];
+        const exact = candidates.find((c) => !claimedLines.has(c) && c.qty === expectedQty);
+        if (exact) claimedLines.add(exact);
+        matches.set(component.componentTypeId, exact || null);
+      }
+      matchesByLineRefId.set(line.lineRefId, matches);
+    }
+
+    return { matchesByLineRefId, claimedLines };
+  }
+
   // Builds one line's DOM (its .tree-line, plus a sibling .tree-components
   // if it's a Composite/Alias with catalog-known components) but does not
   // attach it anywhere - callers append it wherever it belongs. Shared by
   // the full-section render, the single-line seamless insert, and the
   // single-section seamless re-render used after removing a line.
-  function buildTreeLineNode(loadedJob, line, linesByType) {
+  // `componentMatches` is this line's own entry from computeComponentMatches
+  // (Map<componentTypeId, matchedLine|null>), or null/undefined if unknown.
+  function buildTreeLineNode(loadedJob, line, componentMatches) {
     const catalogItem = state.catalogById.get(line.typeId);
     const equipmentType = line.equipmentType ?? catalogItem?.equipmentType ?? 0;
     const components = catalogItem?.components || [];
@@ -387,8 +437,12 @@
       componentsEl = document.createElement('div');
       componentsEl.className = 'tree-components collapsed';
       for (const component of components) {
-        const matchedLine = linesByType.get(component.componentTypeId);
-        const qty = matchedLine ? matchedLine.qty : component.quantity;
+        const matchedLine = componentMatches ? componentMatches.get(component.componentTypeId) : null;
+        // Fallback multiplies by this line's own qty too - the recipe's
+        // quantity is per one unit of the composite, so a composite booked
+        // qty>1 needs that scaled up even when no confident real-line match
+        // exists (previously this always showed the bare per-unit number).
+        const qty = matchedLine ? matchedLine.qty : component.quantity * (line.qty || 1);
         const compLineEl = document.createElement('div');
         compLineEl.className = 'tree-component-line';
         compLineEl.innerHTML = `<span class="tree-component-qty">${qty} ×</span><span>${escapeHtml(component.componentName || '')}</span>`;
@@ -418,26 +472,14 @@
     // COMPOSIT data) often ALSO exist as their own separate Sort rows in
     // the same section, for stock tracking - without this, they'd render
     // twice: once as a standalone line, once nested under the Composite.
-    // Absorb them into the Composite's nested view instead and skip the
-    // standalone line, using the real persisted quantity when available
-    // (more authoritative than the catalog recipe's default quantity).
-    const linesByType = new Map(sectionLines.map((l) => [l.typeId, l]));
-    const absorbedTypeIds = new Set();
-    for (const line of sectionLines) {
-      const catalogItem = state.catalogById.get(line.typeId);
-      const equipmentType = line.equipmentType ?? catalogItem?.equipmentType ?? 0;
-      if (equipmentType > 0) {
-        for (const component of catalogItem?.components || []) {
-          if (linesByType.has(component.componentTypeId)) {
-            absorbedTypeIds.add(component.componentTypeId);
-          }
-        }
-      }
-    }
+    // computeComponentMatches claims at most one real line per component
+    // (by exact quantity match) instead of every line of that type, so an
+    // unrelated same-type line stays visible on its own - see its comment.
+    const { matchesByLineRefId, claimedLines } = computeComponentMatches(sectionLines);
 
     for (const line of sectionLines) {
-      if (absorbedTypeIds.has(line.typeId)) continue;
-      const { lineEl, componentsEl } = buildTreeLineNode(loadedJob, line, linesByType);
+      if (claimedLines.has(line)) continue;
+      const { lineEl, componentsEl } = buildTreeLineNode(loadedJob, line, matchesByLineRefId.get(line.lineRefId));
       sectionEl.appendChild(lineEl);
       if (componentsEl) sectionEl.appendChild(componentsEl);
     }
@@ -667,10 +709,9 @@
     if (sectionEl) {
       const emptyEl = sectionEl.querySelector('.tree-section-empty');
       if (emptyEl) emptyEl.remove();
-      const linesByType = new Map(
-        loadedJob.existingLines.filter((l) => l.sectionId === section.sectionId).map((l) => [l.typeId, l]),
-      );
-      const { lineEl, componentsEl } = buildTreeLineNode(loadedJob, line, linesByType);
+      const sectionLines = loadedJob.existingLines.filter((l) => l.sectionId === section.sectionId);
+      const { matchesByLineRefId } = computeComponentMatches(sectionLines);
+      const { lineEl, componentsEl } = buildTreeLineNode(loadedJob, line, matchesByLineRefId.get(line.lineRefId));
       // appendChild always lands at the end of sectionEl's current children
       // (header, add-widget, every prior line) - "after all already-added
       // lines" falls out naturally from DOM append order.
