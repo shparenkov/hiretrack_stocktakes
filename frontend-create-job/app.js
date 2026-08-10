@@ -225,7 +225,30 @@
       header.textContent = title;
       sectionEl.appendChild(header);
 
+      // A Composite/Alias line's declared components (from the catalog's
+      // COMPOSIT data) often ALSO exist as their own separate Sort rows in
+      // the same section, for stock tracking - without this, they'd render
+      // twice: once as a standalone line, once nested under the Composite.
+      // Absorb them into the Composite's nested view instead and skip the
+      // standalone line, using the real persisted quantity when available
+      // (more authoritative than the catalog recipe's default quantity).
+      const linesByType = new Map(sectionLines.map((l) => [l.typeId, l]));
+      const absorbedTypeIds = new Set();
       for (const line of sectionLines) {
+        const catalogItem = state.catalogById.get(line.typeId);
+        const equipmentType = line.equipmentType ?? catalogItem?.equipmentType ?? 0;
+        if (equipmentType > 0) {
+          for (const component of catalogItem?.components || []) {
+            if (linesByType.has(component.componentTypeId)) {
+              absorbedTypeIds.add(component.componentTypeId);
+            }
+          }
+        }
+      }
+
+      for (const line of sectionLines) {
+        if (absorbedTypeIds.has(line.typeId)) continue;
+
         const catalogItem = state.catalogById.get(line.typeId);
         const equipmentType = line.equipmentType ?? catalogItem?.equipmentType ?? 0;
         const components = catalogItem?.components || [];
@@ -252,9 +275,11 @@
           const componentsEl = document.createElement('div');
           componentsEl.className = 'tree-components';
           for (const component of components) {
+            const matchedLine = linesByType.get(component.componentTypeId);
+            const qty = matchedLine ? matchedLine.qty : component.quantity;
             const compLineEl = document.createElement('div');
             compLineEl.className = 'tree-component-line';
-            compLineEl.innerHTML = `<span>${escapeHtml(component.componentName || '')} <span class="meta">#${component.componentTypeId}</span></span><span class="tree-component-qty">×${component.quantity}</span>`;
+            compLineEl.innerHTML = `<span>${escapeHtml(component.componentName || '')} <span class="meta">#${component.componentTypeId}</span></span><span class="tree-component-qty">×${qty}</span>`;
             componentsEl.appendChild(compLineEl);
           }
           sectionEl.appendChild(componentsEl);
