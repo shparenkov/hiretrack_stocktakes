@@ -108,3 +108,21 @@ export interface DeleteSectionResult {
 export async function deleteHiretrackSection(sectionId: number, eqlistId: number): Promise<DeleteSectionResult> {
   return runHiretrackOdbcWrite<DeleteSectionResult>({ operation: 'delete-section', sectionId, eqlistId });
 }
+
+// api_v2's append_to_booking has no section param - a freshly appended line
+// lands wherever HireTrack itself decides (observed live: an auto-created
+// "Warehouse Added Equipment" section), not the section the create-job UI's
+// per-section "add equipment" widget was actually used from. Called right
+// after a successful append to move the new line into the right section.
+export interface SetLineSectionResult {
+  lineRefId: number;
+  sectionId: number;
+}
+
+export async function setHiretrackLineSection(
+  lineRefId: number,
+  eqlistId: number,
+  sectionId: number,
+): Promise<SetLineSectionResult> {
+  return runHiretrackOdbcWrite<SetLineSectionResult>({ operation: 'set-line-section', lineRefId, eqlistId, sectionId });
+}

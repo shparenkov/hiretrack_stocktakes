@@ -17,6 +17,7 @@ const https_1 = __importDefault(require("https"));
 const http_1 = __importDefault(require("http"));
 const url_1 = require("url");
 const hiretrack_odbc_write_1 = require("./hiretrack-odbc-write");
+const hiretrack_equipment_note_write_1 = require("./hiretrack-equipment-note-write");
 // Confirmed live against production (2026-08-09): warehouse 1 = "Moscow" (IsDefault),
 // pricelist 6 = "SA Rental Scheme", user 1 = "HireTrack_Admin" (SystemAdmin), client 2 =
 // "Test client". These are fallbacks only -- override via hiretrack.config.json's
@@ -298,7 +299,7 @@ async function appendLinesToExistingBooking(input) {
     const failedLines = [];
     for (const line of input.lines) {
         try {
-            await appendToHiretrackBooking({
+            const result = await appendToHiretrackBooking({
                 typeId: line.typeId,
                 quantity: line.quantity,
                 dateFrom: input.dateFrom,
@@ -309,6 +310,9 @@ async function appendLinesToExistingBooking(input) {
                 warehouseId: input.warehouseId,
                 pricelistId: input.pricelistId,
             });
+            if (line.sectionId != null && result.lineRefId != null) {
+                await (0, hiretrack_equipment_note_write_1.setHiretrackLineSection)(result.lineRefId, input.eqlistId, line.sectionId);
+            }
             linesWritten += 1;
         }
         catch (error) {

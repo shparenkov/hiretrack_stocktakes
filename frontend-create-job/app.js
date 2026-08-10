@@ -14,7 +14,8 @@
   const newJobCard = document.getElementById('new-job-card');
   const newJobClientCard = document.getElementById('new-job-client-card');
   const existingJobCard = document.getElementById('existing-job-card');
-  const equipmentCardTitle = document.getElementById('equipment-card-title');
+  const equipmentCardEl = document.getElementById('equipment-card');
+  const submitCardEl = document.querySelector('.submit-card');
 
   const jobRefSearchInput = document.getElementById('job-ref-search');
   const jobRefResultsEl = document.getElementById('job-ref-results');
@@ -115,8 +116,12 @@
     newJobCard.classList.toggle('hidden', mode !== 'new');
     newJobClientCard.classList.toggle('hidden', mode !== 'new');
     existingJobCard.classList.toggle('hidden', mode !== 'existing');
-    equipmentCardTitle.textContent = mode === 'existing' ? 'Добавить оборудование' : 'Оборудование';
-    submitBtn.textContent = mode === 'existing' ? 'Добавить в работу' : 'Создать работу в HireTrack';
+    // Existing-job mode adds equipment directly per-section (top of each
+    // section in the tree, see buildSectionAddWidget) instead of through
+    // this shared staging table + batch submit - hide both entirely.
+    equipmentCardEl.classList.toggle('hidden', mode === 'existing');
+    submitCardEl.classList.toggle('hidden', mode === 'existing');
+    submitBtn.textContent = 'Создать работу в HireTrack';
     resultEl.classList.add('hidden');
     state.lines = [];
     renderLines();
@@ -432,6 +437,170 @@
     return wrap;
   }
 
+  // Appends one line directly to loadedJob's Eqlist, tagged with this
+  // section (api_v2's append_to_booking has no section param of its own -
+  // the backend moves the new line into place afterward, see
+  // setHiretrackLineSection). Reloads the tree and refocuses this same
+  // section's search box on success, so entering several items in a row
+  // stays a tight loop.
+  async function addEquipmentToSection(loadedJob, section, typeId, qty) {
+    jobRefStatusEl.textContent = 'Добавляем оборудование…';
+    try {
+      const res = await fetch(`/api/create-job/jobs/${encodeURIComponent(loadedJob.jobRef)}/lines`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          eqlistId: loadedJob.eqlistId,
+          clientId: loadedJob.clientId,
+          dateFrom: loadedJob.dateFrom,
+          dateTo: loadedJob.dateTo,
+          lines: [{ typeId, quantity: qty, sectionId: section.sectionId }],
+        }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'Не удалось добавить оборудование');
+      if (data.linesWritten === 0) {
+        const failure = data.failedLines && data.failedLines[0];
+        throw new Error((failure && failure.error) || 'HireTrack отклонил позицию');
+      }
+      jobRefStatusEl.textContent = '';
+      await openExistingJob(loadedJob.jobRef, section.sectionId);
+    } catch (err) {
+      jobRefStatusEl.textContent = `Ошибка добавления: ${err.message}`;
+    }
+  }
+
+  // Per-section "add equipment" widget, rendered at the top of every real
+  // section - search + inline qty, arrow-key/Enter selection, and
+  // availability shown directly on each result row ("10/10"), all aimed at
+  // fast consecutive entry without a separate staging table.
+  function buildSectionAddWidget(loadedJob, section) {
+    const wrap = document.createElement('div');
+    wrap.className = 'section-add';
+    wrap.dataset.sectionId = String(section.sectionId);
+    wrap.innerHTML = `
+      <div class="section-add-row">
+        <input type="text" class="section-add-search" placeholder="Добавить оборудование в эту секцию…" autocomplete="off">
+        <input type="number" class="section-add-qty" min="1" step="1" value="1">
+      </div>
+      <div class="section-add-results hidden"></div>
+    `;
+    const searchInput = wrap.querySelector('.section-add-search');
+    const qtyInput = wrap.querySelector('.section-add-qty');
+    const resultsEl = wrap.querySelector('.section-add-results');
+
+    let matches = [];
+    let highlightedIndex = -1;
+    let searchToken = 0;
+
+    const closeResults = () => {
+      resultsEl.classList.add('hidden');
+      resultsEl.innerHTML = '';
+      matches = [];
+      highlightedIndex = -1;
+    };
+
+    const setHighlighted = (index) => {
+      const rows = [...resultsEl.querySelectorAll('.section-add-result-row')];
+      rows.forEach((row, i) => row.classList.toggle('highlighted', i === index));
+      if (index >= 0 && rows[index]) rows[index].scrollIntoView({ block: 'nearest' });
+      highlightedIndex = index;
+    };
+
+    const commitAdd = (typeId) => {
+      const qty = Math.max(1, Math.round(Number(qtyInput.value) || 1));
+      closeResults();
+      searchInput.value = '';
+      qtyInput.value = '1';
+      addEquipmentToSection(loadedJob, section, typeId, qty);
+    };
+
+    const runSearch = (query) => {
+      const q = query.trim().toLowerCase();
+      if (q.length < 2 || !state.catalogLoaded) {
+        closeResults();
+        return;
+      }
+      matches = state.catalog
+        .filter((item) => {
+          const haystack = `${item.name || ''} ${item.categoryName || ''} ${item.shortcode || ''} ${item.similarGroupName || ''}`.toLowerCase();
+          return haystack.includes(q);
+        })
+        .slice(0, 8);
+
+      if (matches.length === 0) {
+        resultsEl.innerHTML = '<div class="section-add-empty">Ничего не найдено</div>';
+        resultsEl.classList.remove('hidden');
+        highlightedIndex = -1;
+        return;
+      }
+
+      const token = ++searchToken;
+      const desiredQty = Math.max(1, Math.round(Number(qtyInput.value) || 1));
+      resultsEl.innerHTML = '';
+      matches.forEach((item) => {
+        const row = document.createElement('div');
+        row.className = 'section-add-result-row';
+        row.innerHTML = `
+          <span class="section-add-result-name">${escapeHtml(item.name || '')}</span>
+          <span class="section-add-result-avail pending">…</span>
+        `;
+        // mousedown, not click - fires before the search input's blur would
+        // otherwise close the dropdown first.
+        row.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          commitAdd(item.typeId);
+        });
+        resultsEl.appendChild(row);
+
+        const availEl = row.querySelector('.section-add-result-avail');
+        const params = new URLSearchParams({
+          typeId: String(item.typeId),
+          quantity: String(desiredQty),
+          dateFrom: loadedJob.dateFrom,
+          dateTo: loadedJob.dateTo,
+        });
+        fetch(`/api/create-job/availability?${params.toString()}`)
+          .then((res) => res.json())
+          .then((data) => {
+            if (token !== searchToken || !data.ok) throw new Error(data && data.error);
+            const availableQty = data.availableQty ?? 0;
+            const stocklevelForWarehouse = data.stocklevelForWarehouse ?? 0;
+            availEl.textContent = `${availableQty}/${stocklevelForWarehouse}`;
+            availEl.className = 'section-add-result-avail ' + (availableQty <= 0 ? 'none' : availableQty < desiredQty ? 'low' : 'ok');
+          })
+          .catch(() => {
+            if (token !== searchToken) return;
+            availEl.textContent = '?';
+            availEl.className = 'section-add-result-avail none';
+          });
+      });
+      resultsEl.classList.remove('hidden');
+      highlightedIndex = -1;
+    };
+
+    searchInput.addEventListener('input', debounce(() => runSearch(searchInput.value), 200));
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown') {
+        if (matches.length === 0) return;
+        e.preventDefault();
+        setHighlighted(Math.min(highlightedIndex + 1, matches.length - 1));
+      } else if (e.key === 'ArrowUp') {
+        if (matches.length === 0) return;
+        e.preventDefault();
+        setHighlighted(Math.max(highlightedIndex - 1, 0));
+      } else if (e.key === 'Enter') {
+        if (matches.length === 0) return;
+        e.preventDefault();
+        commitAdd(matches[highlightedIndex >= 0 ? highlightedIndex : 0].typeId);
+      } else if (e.key === 'Escape') {
+        closeResults();
+      }
+    });
+
+    return wrap;
+  }
+
   // Nested view: Sections -> lines -> (for Composite/Alias lines) their
   // components. Components come straight from the already-loaded catalog
   // cache (state.catalogById), not a separate fetch - equipment-catalog-full
@@ -458,6 +627,7 @@
       const sectionEl = document.createElement('div');
       sectionEl.className = 'tree-section';
       sectionEl.appendChild(buildSectionHeader(loadedJob, section));
+      sectionEl.appendChild(buildSectionAddWidget(loadedJob, section));
       const sectionLines = linesBySection.get(section.sectionId) || [];
       if (sectionLines.length > 0) {
         renderLinesIntoSection(sectionEl, sectionLines, loadedJob);
@@ -577,7 +747,11 @@
     }
   }
 
-  async function openExistingJob(jobRef) {
+  // focusSectionId: after rebuilding the tree, refocus that section's own
+  // "add equipment" search box - lets addEquipmentToSection reload+refocus
+  // in one call, so entering several items into the same section stays a
+  // tight type -> Enter -> type -> Enter loop instead of losing focus.
+  async function openExistingJob(jobRef, focusSectionId) {
     if (!jobRef) {
       jobRefStatusEl.textContent = 'Введите номер работы или выберите из списка.';
       return;
@@ -612,6 +786,10 @@
       renderExistingLinesTree(state.loadedJob);
       jobLoadedInfoEl.classList.remove('hidden');
       updateSubmitState();
+      if (focusSectionId != null) {
+        const input = existingLinesTreeEl.querySelector(`.section-add[data-section-id="${focusSectionId}"] .section-add-search`);
+        if (input) input.focus();
+      }
     } catch (err) {
       jobRefStatusEl.textContent = `Ошибка: ${err.message}`;
     }
@@ -738,6 +916,14 @@
     if (!e.target.closest('.equipment-picker')) {
       equipmentResultsEl.classList.add('hidden');
     }
+  });
+
+  // Registered once (not per-widget-instance, since the tree - and every
+  // section-add widget in it - gets rebuilt on every reload) - closes
+  // whichever per-section dropdown is open when clicking outside it.
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('.section-add')) return;
+    document.querySelectorAll('.section-add-results').forEach((el) => el.classList.add('hidden'));
   });
 
   // --- Lines ---
@@ -869,19 +1055,19 @@
   dateFromInput.addEventListener('change', refreshAllAvailability);
   dateToInput.addEventListener('change', refreshAllAvailability);
 
-  // --- Submit ---
+  // --- Submit (new-job creation only - existing-job mode adds equipment
+  // directly per-section, see buildSectionAddWidget/addEquipmentToSection,
+  // and never shows this card at all) ---
   function updateSubmitState() {
     const rangeValid = updateDateReadbacks();
     const { dateFrom, dateTo } = getDateRange();
     const ready =
-      state.mode === 'existing'
-        ? Boolean(state.loadedJob) && state.lines.length > 0
-        : jobNameInput.value.trim().length > 0 &&
-          state.selectedClient &&
-          dateFrom &&
-          dateTo &&
-          rangeValid &&
-          state.lines.length > 0;
+      jobNameInput.value.trim().length > 0 &&
+      state.selectedClient &&
+      dateFrom &&
+      dateTo &&
+      rangeValid &&
+      state.lines.length > 0;
     submitBtn.disabled = !ready;
   }
 
@@ -892,32 +1078,20 @@
   dateToInput.addEventListener('change', updateSubmitState);
 
   submitBtn.addEventListener('click', async () => {
-    const isExisting = state.mode === 'existing';
-    const url = isExisting
-      ? `/api/create-job/jobs/${encodeURIComponent(state.loadedJob.jobRef)}/lines`
-      : '/api/create-job/bookings';
-    const payload = isExisting
-      ? {
-          eqlistId: state.loadedJob.eqlistId,
-          clientId: state.loadedJob.clientId,
-          dateFrom: state.loadedJob.dateFrom,
-          dateTo: state.loadedJob.dateTo,
-          lines: state.lines.map((line) => ({ typeId: line.typeId, quantity: line.qty })),
-        }
-      : {
-          jobName: jobNameInput.value.trim(),
-          clientId: state.selectedClient.companyId,
-          dateFrom: getDateRange().dateFrom,
-          dateTo: getDateRange().dateTo,
-          lines: state.lines.map((line) => ({ typeId: line.typeId, quantity: line.qty })),
-        };
+    const payload = {
+      jobName: jobNameInput.value.trim(),
+      clientId: state.selectedClient.companyId,
+      dateFrom: getDateRange().dateFrom,
+      dateTo: getDateRange().dateTo,
+      lines: state.lines.map((line) => ({ typeId: line.typeId, quantity: line.qty })),
+    };
 
     submitBtn.disabled = true;
-    submitBtn.textContent = isExisting ? 'Добавляем…' : 'Создаём…';
+    submitBtn.textContent = 'Создаём…';
     resultEl.classList.add('hidden');
 
     try {
-      const res = await fetch(url, {
+      const res = await fetch('/api/create-job/bookings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -927,28 +1101,19 @@
 
       const allFailed = data.linesWritten === 0;
       const someFailed = data.failedLines && data.failedLines.length > 0;
-      let html = isExisting
-        ? `Добавлено в работу <strong>${escapeHtml(state.loadedJob.jobRef)}</strong>. Записано позиций: <strong>${data.linesWritten} из ${state.lines.length}</strong>.`
-        : `Работа создана: <strong>${escapeHtml(data.jobRef || String(data.jobId))}</strong>, Eqlist <strong>${escapeHtml(data.eqRef || String(data.eqlistId))}</strong>. Записано позиций: <strong>${data.linesWritten} из ${state.lines.length}</strong>.`;
+      let html = `Работа создана: <strong>${escapeHtml(data.jobRef || String(data.jobId))}</strong>, Eqlist <strong>${escapeHtml(data.eqRef || String(data.eqlistId))}</strong>. Записано позиций: <strong>${data.linesWritten} из ${state.lines.length}</strong>.`;
       if (someFailed) {
         html += '<br>Не удалось записать: ' + data.failedLines.map((f) => `#${f.typeId} — ${escapeHtml(f.error)}`).join('; ');
       }
       resultEl.className = allFailed ? 'result error' : someFailed ? 'result warning' : 'result success';
       resultEl.innerHTML = html;
       resultEl.classList.remove('hidden');
-
-      if (!allFailed && isExisting) {
-        // Re-open the job so the "already on this job" list reflects the new lines.
-        state.lines = [];
-        renderLines();
-        await openExistingJob(state.loadedJob.jobRef);
-      }
     } catch (err) {
       resultEl.className = 'result error';
       resultEl.textContent = `Ошибка: ${err.message}`;
       resultEl.classList.remove('hidden');
     } finally {
-      submitBtn.textContent = isExisting ? 'Добавить в работу' : 'Создать работу в HireTrack';
+      submitBtn.textContent = 'Создать работу в HireTrack';
       updateSubmitState();
     }
   });

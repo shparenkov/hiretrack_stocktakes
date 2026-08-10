@@ -4,6 +4,7 @@ import https from 'https';
 import http from 'http';
 import { URL } from 'url';
 import { runHiretrackOdbcWrite } from './hiretrack-odbc-write';
+import { setHiretrackLineSection } from './hiretrack-equipment-note-write';
 
 interface HiretrackConfig {
   hiretrack?: {
@@ -393,6 +394,11 @@ export async function createHiretrackBooking(input: CreateBookingInput): Promise
   };
 }
 
+export interface AppendBookingLineInput extends CreateBookingLineInput {
+  // Which EqSections row this line should land in - see setHiretrackLineSection.
+  sectionId?: number;
+}
+
 export interface AppendLinesToExistingBookingInput {
   eqlistId: number;
   clientId: number;
@@ -401,7 +407,7 @@ export interface AppendLinesToExistingBookingInput {
   userId?: number;
   warehouseId?: number;
   pricelistId?: number;
-  lines: CreateBookingLineInput[];
+  lines: AppendBookingLineInput[];
 }
 
 export interface AppendLinesToExistingBookingResult {
@@ -427,7 +433,7 @@ export async function appendLinesToExistingBooking(
 
   for (const line of input.lines) {
     try {
-      await appendToHiretrackBooking({
+      const result = await appendToHiretrackBooking({
         typeId: line.typeId,
         quantity: line.quantity,
         dateFrom: input.dateFrom,
@@ -438,6 +444,9 @@ export async function appendLinesToExistingBooking(
         warehouseId: input.warehouseId,
         pricelistId: input.pricelistId,
       });
+      if (line.sectionId != null && result.lineRefId != null) {
+        await setHiretrackLineSection(result.lineRefId, input.eqlistId, line.sectionId);
+      }
       linesWritten += 1;
     } catch (error) {
       failedLines.push({

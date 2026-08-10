@@ -4,6 +4,7 @@ exports.createEquipmentNoteWithLines = createEquipmentNoteWithLines;
 exports.renameHiretrackSection = renameHiretrackSection;
 exports.createHiretrackSection = createHiretrackSection;
 exports.deleteHiretrackSection = deleteHiretrackSection;
+exports.setHiretrackLineSection = setHiretrackLineSection;
 const hiretrack_odbc_write_1 = require("./hiretrack-odbc-write");
 async function createEquipmentNoteWithLines(input) {
     const { noteId } = await (0, hiretrack_odbc_write_1.runHiretrackOdbcWrite)({
@@ -52,4 +53,7 @@ async function createHiretrackSection(eqlistId, sectionText) {
 }
 async function deleteHiretrackSection(sectionId, eqlistId) {
     return (0, hiretrack_odbc_write_1.runHiretrackOdbcWrite)({ operation: 'delete-section', sectionId, eqlistId });
+}
+async function setHiretrackLineSection(lineRefId, eqlistId, sectionId) {
+    return (0, hiretrack_odbc_write_1.runHiretrackOdbcWrite)({ operation: 'set-line-section', lineRefId, eqlistId, sectionId });
 }

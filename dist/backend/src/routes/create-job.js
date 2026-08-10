@@ -96,12 +96,18 @@ exports.createJobRouter.get('/jobs/:jobRef', async (req, res) => {
         res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
     }
 });
+const appendBookingLineSchema = bookingLineSchema.extend({
+    // Which EqSections row to move the newly appended line into - api_v2's
+    // append_to_booking has no section param of its own, see
+    // hiretrack-equipment-note-write.ts's setHiretrackLineSection.
+    sectionId: zod_1.z.coerce.number().int().positive().optional(),
+});
 const appendLinesSchema = zod_1.z.object({
     eqlistId: zod_1.z.coerce.number().int().positive(),
     clientId: zod_1.z.coerce.number().int().positive(),
     dateFrom: zod_1.z.string().min(1),
     dateTo: zod_1.z.string().min(1),
-    lines: zod_1.z.array(bookingLineSchema).min(1).max(200),
+    lines: zod_1.z.array(appendBookingLineSchema).min(1).max(200),
 });
 exports.createJobRouter.post('/jobs/:jobRef/lines', async (req, res) => {
     const parsed = appendLinesSchema.safeParse(req.body);

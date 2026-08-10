@@ -108,12 +108,19 @@ createJobRouter.get('/jobs/:jobRef', async (req: Request, res: Response) => {
   }
 });
 
+const appendBookingLineSchema = bookingLineSchema.extend({
+  // Which EqSections row to move the newly appended line into - api_v2's
+  // append_to_booking has no section param of its own, see
+  // hiretrack-equipment-note-write.ts's setHiretrackLineSection.
+  sectionId: z.coerce.number().int().positive().optional(),
+});
+
 const appendLinesSchema = z.object({
   eqlistId: z.coerce.number().int().positive(),
   clientId: z.coerce.number().int().positive(),
   dateFrom: z.string().min(1),
   dateTo: z.string().min(1),
-  lines: z.array(bookingLineSchema).min(1).max(200),
+  lines: z.array(appendBookingLineSchema).min(1).max(200),
 });
 
 createJobRouter.post('/jobs/:jobRef/lines', async (req: Request, res: Response) => {

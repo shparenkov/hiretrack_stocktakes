@@ -186,6 +186,25 @@ def delete_section(cursor, params):
     return {"sectionId": section_id, "linesReassigned": lines_reassigned}
 
 
+def set_line_section(cursor, params):
+    lineref_id = params.get("lineRefId")
+    eqlist_id = params.get("eqlistId")
+    section_id = params.get("sectionId")
+    if lineref_id is None or eqlist_id is None or section_id is None:
+        raise ValueError("set-line-section requires 'lineRefId', 'eqlistId' and 'sectionId'")
+
+    # api_v2's append_to_booking has no section param - a freshly appended
+    # line lands wherever HireTrack itself decides (observed live: an
+    # auto-created "Warehouse Added Equipment" section), not the section the
+    # user picked in the create-job UI. This moves it afterward - same plain
+    # column write already proven safe for delete-section's NULL case.
+    cursor.execute(
+        'UPDATE "Sort" SET "sectionID" = ? WHERE "Lineref" = ? AND "Eqlno" = ?',
+        section_id, lineref_id, eqlist_id,
+    )
+    return {"lineRefId": lineref_id, "sectionId": section_id}
+
+
 def main():
     if not DSN:
         raise ValueError("HIRETRACK_WRITE_ODBC_DSN is not configured")
@@ -212,6 +231,8 @@ def main():
             result = create_section(cursor, request)
         elif operation == "delete-section":
             result = delete_section(cursor, request)
+        elif operation == "set-line-section":
+            result = set_line_section(cursor, request)
         else:
             raise ValueError(f"Unsupported HireTrack write operation: {operation}")
         json.dump({"ok": True, "result": result}, sys.stdout, ensure_ascii=False)
