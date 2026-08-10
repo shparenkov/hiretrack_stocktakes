@@ -713,7 +713,14 @@
         const failure = data.failedLines && data.failedLines[0];
         throw new Error((failure && failure.error) || 'HireTrack отклонил позицию');
       }
-      jobRefStatusEl.textContent = '';
+      // written.quantity is the REAL persisted amount (bookingQty), which
+      // can be silently lower than requested when stock is insufficient -
+      // HireTrack still reports success in that case, so this is the only
+      // place the shortfall shows up.
+      jobRefStatusEl.textContent =
+        written.quantity !== written.requestedQuantity
+          ? `HireTrack добавил только ${written.quantity} из ${written.requestedQuantity} — недостаточно оборудования на складе на эти даты.`
+          : '';
       insertNewLine(loadedJob, section, written);
     } catch (err) {
       jobRefStatusEl.textContent = `Ошибка добавления: ${err.message}`;
@@ -875,8 +882,20 @@
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'Не удалось изменить количество');
-      line.qty = newQty;
-      jobRefStatusEl.textContent = '';
+      // HireTrack can report success (ValidationResult 0) while silently
+      // capping the actual quantity below what was requested when stock is
+      // insufficient - bookingQty is the only field that reveals this, so
+      // it - not newQty - is what actually got persisted. Trusting newQty
+      // here was the exact bug: the input looked right until the next
+      // reload, when the real (lower) value came back from the server.
+      const actualQty = data.bookingQty ?? newQty;
+      line.qty = actualQty;
+      const inputEl = existingLinesTreeEl.querySelector(`.tree-line[data-line-ref-id="${line.lineRefId}"] .tree-line-qty-input`);
+      if (inputEl) inputEl.value = String(actualQty);
+      jobRefStatusEl.textContent =
+        actualQty !== newQty
+          ? `HireTrack применил только ${actualQty} из ${newQty} — недостаточно оборудования на складе на эти даты.`
+          : '';
       refreshExistingLineAvailability(loadedJob, line);
     } catch (err) {
       jobRefStatusEl.textContent = `Ошибка изменения количества: ${err.message}`;

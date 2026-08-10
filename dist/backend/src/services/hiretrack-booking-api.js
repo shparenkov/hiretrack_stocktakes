@@ -347,7 +347,14 @@ async function appendLinesToExistingBooking(input) {
             linesWritten += 1;
             writtenLines.push({
                 typeId: line.typeId,
-                quantity: line.quantity,
+                // BookingQty is the real persisted amount - confirmed live
+                // (2026-08-10) that HireTrack silently caps this below
+                // RequestedQty when stock is insufficient, still with
+                // ValidationResult 0 (success) and no other signal of the
+                // shortfall. Falling back to the requested value only if the API
+                // ever omits BookingQty entirely.
+                quantity: result.bookingQty ?? line.quantity,
+                requestedQuantity: line.quantity,
                 sectionId: line.sectionId ?? null,
                 lineRefId: result.lineRefId,
             });

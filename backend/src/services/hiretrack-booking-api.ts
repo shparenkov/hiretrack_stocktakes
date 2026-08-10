@@ -469,7 +469,10 @@ export interface AppendLinesToExistingBookingResult {
   // Per-line detail for successful writes, so a caller (the create-job
   // frontend) can insert the new line into its own DOM directly instead of
   // refetching the whole job just to learn the lineRefId HireTrack assigned.
-  writtenLines: { typeId: number; quantity: number; sectionId: number | null; lineRefId: number }[];
+  // quantity is the REAL persisted amount (BookingQty), not necessarily what
+  // was requested - see the comment on appendToHiretrackBooking's own
+  // BookingQty field for why these can differ.
+  writtenLines: { typeId: number; quantity: number; requestedQuantity: number; sectionId: number | null; lineRefId: number }[];
 }
 
 // Adds lines to an EXISTING Eqlist (the "open an existing job" flow) - no
@@ -487,7 +490,7 @@ export async function appendLinesToExistingBooking(
 
   let linesWritten = 0;
   const failedLines: { typeId: number; error: string }[] = [];
-  const writtenLines: { typeId: number; quantity: number; sectionId: number | null; lineRefId: number }[] = [];
+  const writtenLines: { typeId: number; quantity: number; requestedQuantity: number; sectionId: number | null; lineRefId: number }[] = [];
 
   for (const line of input.lines) {
     try {
@@ -511,7 +514,14 @@ export async function appendLinesToExistingBooking(
       linesWritten += 1;
       writtenLines.push({
         typeId: line.typeId,
-        quantity: line.quantity,
+        // BookingQty is the real persisted amount - confirmed live
+        // (2026-08-10) that HireTrack silently caps this below
+        // RequestedQty when stock is insufficient, still with
+        // ValidationResult 0 (success) and no other signal of the
+        // shortfall. Falling back to the requested value only if the API
+        // ever omits BookingQty entirely.
+        quantity: result.bookingQty ?? line.quantity,
+        requestedQuantity: line.quantity,
         sectionId: line.sectionId ?? null,
         lineRefId: result.lineRefId,
       });
@@ -544,6 +554,13 @@ export interface AppendToBookingResult {
   requestedQty: number | null;
   stocklevelForWarehouse: number | null;
   availableQty: number | null;
+  // The REAL persisted quantity - NOT necessarily requestedQty. Confirmed
+  // live (2026-08-10): when requestedQty exceeds what's actually available,
+  // HireTrack silently caps bookingQty to the available amount while still
+  // returning ValidationResult 0 (success) - assertBookingSuccess below
+  // only checks ValidationResult, so it does NOT catch this on its own.
+  // Every caller that echoes a quantity back to the user must use this
+  // field, not the quantity it requested.
   bookingQty: number | null;
   currencyIso: string | null;
   preDiscountPrice: number | null;
@@ -611,6 +628,12 @@ export interface ChangeBookingQuantityResult {
   requestedQty: number | null;
   stocklevelForWarehouse: number | null;
   availableQty: number | null;
+  // The REAL persisted quantity, not necessarily requestedQty - see the
+  // matching comment on AppendToBookingResult.bookingQty. Confirmed live
+  // (2026-08-10) with the exact same silent-cap behavior here: requesting
+  // 13 on a line with 3 truly available returned ValidationResult 0
+  // (success), RequestedQty 13, but BookingQty 3 - the change was silently
+  // capped, not rejected, so it must be surfaced to the caller explicitly.
   bookingQty: number | null;
   writeResult: WriteResult;
 }
