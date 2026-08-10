@@ -176,9 +176,14 @@ def delete_section(cursor, params):
     if section_id is None or eqlist_id is None:
         raise ValueError("delete-section requires 'sectionId' and 'eqlistId'")
 
-    # Move any lines still in this section back to "no section" rather than
-    # leaving them pointing at a now-deleted EqSections row - confirmed live
-    # that Sort.sectionID accepts NULL.
+    # As of 2026-08-10, the Node layer removes every line in this section via
+    # api_v2's remove_from_booking (proper delete, same path as the per-line
+    # "x" button) *before* calling this operation, so normally there is
+    # nothing left here to reassign. This UPDATE stays only as a safety net
+    # for any line that somehow still points at the section (race condition,
+    # partial failure upstream, etc.) - confirmed live that Sort.sectionID
+    # accepts NULL, so a stray line lands in "no section" rather than
+    # referencing a deleted EqSections row.
     cursor.execute('UPDATE "Sort" SET "sectionID" = NULL WHERE "sectionID" = ? AND "Eqlno" = ?', section_id, eqlist_id)
     lines_reassigned = cursor.rowcount
 

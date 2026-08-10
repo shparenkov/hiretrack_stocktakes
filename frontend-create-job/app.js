@@ -466,33 +466,6 @@
     }
   }
 
-  // Rebuilds (creates/updates/removes) the "Без секции" bucket to reflect
-  // loadedJob.existingLines' current sectionId==null lines - used after
-  // deleting a section, which reassigns its lines to no-section server-side.
-  function refreshUnsectionedBucket(loadedJob) {
-    const unsectionedLines = loadedJob.existingLines.filter((l) => l.sectionId == null);
-    let sectionEl = [...existingLinesTreeEl.querySelectorAll('.tree-section')].find((el) => el.dataset.sectionId == null);
-
-    if (unsectionedLines.length === 0) {
-      if (sectionEl) sectionEl.remove();
-      return;
-    }
-
-    if (!sectionEl) {
-      sectionEl = document.createElement('div');
-      sectionEl.className = 'tree-section';
-      const header = document.createElement('div');
-      header.className = 'tree-section-header';
-      header.innerHTML = '<span class="tree-section-title">Без секции</span>';
-      sectionEl.appendChild(header);
-      // "+ Добавить секцию" is always the tree's last child (see
-      // renderExistingLinesTree) - insert the bucket right before it.
-      existingLinesTreeEl.insertBefore(sectionEl, existingLinesTreeEl.lastElementChild);
-    }
-
-    rerenderSectionLines(loadedJob, sectionEl);
-  }
-
   // Section header with inline rename (pencil -> text input, commits on
   // blur/Enter, Escape cancels) and delete (confirm() before calling the
   // API - a real EqSections row, not just a UI grouping). Both mutate
@@ -578,11 +551,32 @@
 
     deleteBtn.addEventListener('click', async () => {
       const title = section.sectionText || `Секция #${section.sectionId}`;
-      if (!confirm(`Удалить секцию «${title}»? Оборудование из неё останется на работе без секции.`)) return;
+      const linesToRemove = loadedJob.existingLines.filter((l) => l.sectionId === section.sectionId);
+      const confirmMsg = linesToRemove.length
+        ? `Удалить секцию «${title}» вместе с оборудованием в ней (${linesToRemove.length} поз.)? Это действие нельзя отменить.`
+        : `Удалить секцию «${title}»?`;
+      if (!confirm(confirmMsg)) return;
       jobRefStatusEl.textContent = 'Удаляем секцию…';
+      const sectionEl = existingLinesTreeEl.querySelector(`.tree-section[data-section-id="${section.sectionId}"]`);
       try {
-        const params = new URLSearchParams({ eqlistId: String(loadedJob.eqlistId) });
-        const res = await fetch(`/api/create-job/jobs/${encodeURIComponent(loadedJob.jobRef)}/sections/${section.sectionId}?${params.toString()}`, {
+        // Remove each real line through the same api_v2 remove_from_booking
+        // path as the per-line "×" button, not just a raw Sort delete - this
+        // also covers a Composite's absorbed component lines, since those
+        // are still their own Sort rows in this section (see the earlier
+        // "Composite double-displayed" fix). Only after every line is gone
+        // do we delete the EqSections row itself.
+        for (const line of linesToRemove) {
+          const lineParams = new URLSearchParams({ jobId: String(loadedJob.jobNo), clientId: String(loadedJob.clientId) });
+          const lineRes = await fetch(`/api/create-job/jobs/${encodeURIComponent(loadedJob.jobRef)}/lines/${line.lineRefId}?${lineParams.toString()}`, {
+            method: 'DELETE',
+          });
+          const lineData = await lineRes.json();
+          if (!lineData.ok) throw new Error(lineData.error || `Не удалось удалить «${line.name || ''}»`);
+          loadedJob.existingLines = loadedJob.existingLines.filter((l) => l !== line);
+        }
+
+        const sectionParams = new URLSearchParams({ eqlistId: String(loadedJob.eqlistId) });
+        const res = await fetch(`/api/create-job/jobs/${encodeURIComponent(loadedJob.jobRef)}/sections/${section.sectionId}?${sectionParams.toString()}`, {
           method: 'DELETE',
         });
         const data = await res.json();
@@ -590,14 +584,12 @@
         jobRefStatusEl.textContent = '';
 
         loadedJob.existingSections = loadedJob.existingSections.filter((s) => s.sectionId !== section.sectionId);
-        for (const line of loadedJob.existingLines) {
-          if (line.sectionId === section.sectionId) line.sectionId = null;
-        }
-        const sectionEl = existingLinesTreeEl.querySelector(`.tree-section[data-section-id="${section.sectionId}"]`);
         if (sectionEl) sectionEl.remove();
-        refreshUnsectionedBucket(loadedJob);
       } catch (err) {
         jobRefStatusEl.textContent = `Ошибка удаления секции: ${err.message}`;
+        // Reflect whatever lines were successfully removed before the
+        // failure instead of leaving the DOM out of sync with loadedJob.
+        if (sectionEl) rerenderSectionLines(loadedJob, sectionEl);
       }
     });
 
