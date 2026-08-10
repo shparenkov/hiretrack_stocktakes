@@ -7,6 +7,8 @@ import {
   checkHiretrackAvailability,
   createHiretrackBooking,
   appendLinesToExistingBooking,
+  changeHiretrackBookingQuantity,
+  removeFromHiretrackBooking,
 } from '../services/hiretrack-booking-api';
 
 export const createJobRouter = Router();
@@ -117,6 +119,47 @@ createJobRouter.post('/jobs/:jobRef/lines', async (req: Request, res: Response) 
   }
   try {
     const result = await appendLinesToExistingBooking(parsed.data);
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+const changeQuantitySchema = z.object({
+  quantity: z.coerce.number().positive(),
+  clientId: z.coerce.number().int().positive(),
+  userId: z.coerce.number().int().optional(),
+});
+
+createJobRouter.put('/jobs/:jobRef/lines/:lineRefId', async (req: Request, res: Response) => {
+  const parsed = changeQuantitySchema.safeParse(req.body);
+  const lineRefId = Number(req.params.lineRefId);
+  if (!parsed.success || !Number.isInteger(lineRefId) || lineRefId <= 0) {
+    res.status(400).json({ ok: false, error: 'Validation failed', issues: parsed.success ? undefined : parsed.error.flatten() });
+    return;
+  }
+  try {
+    const result = await changeHiretrackBookingQuantity({ ...parsed.data, lineRefId });
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+const removeLineSchema = z.object({
+  jobId: z.coerce.number().int().positive(),
+  clientId: z.coerce.number().int().positive(),
+});
+
+createJobRouter.delete('/jobs/:jobRef/lines/:lineRefId', async (req: Request, res: Response) => {
+  const parsed = removeLineSchema.safeParse(req.query);
+  const lineRefId = Number(req.params.lineRefId);
+  if (!parsed.success || !Number.isInteger(lineRefId) || lineRefId <= 0) {
+    res.status(400).json({ ok: false, error: 'Validation failed', issues: parsed.success ? undefined : parsed.error.flatten() });
+    return;
+  }
+  try {
+    const result = await removeFromHiretrackBooking({ ...parsed.data, lineRefId });
     res.json({ ok: true, ...result });
   } catch (error) {
     res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });

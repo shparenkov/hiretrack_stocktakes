@@ -278,6 +278,24 @@ main {
   text-align: right;
 }
 
+.tree-line-qty-prefix { color: var(--muted); font-weight: 700; }
+
+.tree-line-qty-input {
+  width: 50px;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  font: 13px Arial, sans-serif;
+}
+
+.tree-line-remove {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--red);
+  cursor: pointer;
+  padding: 4px 9px;
+  font-size: 12px;
+}
+
 .type-badge {
   font: 700 10px Arial, sans-serif;
   text-transform: uppercase;

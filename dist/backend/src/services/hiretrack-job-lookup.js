@@ -76,6 +76,7 @@ async function lookupHiretrackJob(jobRef) {
                 qty: line.Quant,
                 sectionId: line.SectionId ?? null,
                 equipmentType: line.EquipmentType ?? null,
+                lineRefId: line.LineRefId,
             })),
         });
     }

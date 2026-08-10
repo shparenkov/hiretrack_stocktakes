@@ -9,6 +9,8 @@ exports.updateHiretrackEqlistDates = updateHiretrackEqlistDates;
 exports.createHiretrackBooking = createHiretrackBooking;
 exports.appendLinesToExistingBooking = appendLinesToExistingBooking;
 exports.appendToHiretrackBooking = appendToHiretrackBooking;
+exports.changeHiretrackBookingQuantity = changeHiretrackBookingQuantity;
+exports.removeFromHiretrackBooking = removeFromHiretrackBooking;
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const https_1 = __importDefault(require("https"));
@@ -359,4 +361,62 @@ async function appendToHiretrackBooking(input) {
         discountRate: normalizeFloat(row.DiscountRate),
         writeResult,
     };
+}
+// Changes the quantity on an already-existing line (targets Sort.Lineref,
+// the same value append_to_booking returns as LineRefID) - for editing a
+// line on a job opened via "open existing job", not a line still being
+// staged for a new booking.
+async function changeHiretrackBookingQuantity(input) {
+    const config = loadHiretrackConfig();
+    const baseUrl = config.hiretrack?.baseUrl;
+    if (!baseUrl) {
+        throw new Error('HireTrack baseUrl is not configured.');
+    }
+    const params = new URLSearchParams({
+        hiretrack_user_id: String(input.userId ?? config.hiretrack?.defaultUserId ?? FALLBACK_USER_ID),
+        hiretrack_client_id: String(input.clientId),
+        lineref_id: String(input.lineRefId),
+        quantity_required: String(input.quantity),
+    });
+    const url = `${baseUrl}/api_v2/change_booking_quantity?${params.toString()}`;
+    const raw = await requestJson('PUT', url, config.hiretrack?.headers || {}, Number(config.poller?.timeoutMs || 15000));
+    if (!Array.isArray(raw) || raw.length === 0) {
+        throw new Error('HireTrack change_booking_quantity returned no rows.');
+    }
+    const row = raw[0];
+    const writeResult = parseWriteResult(row);
+    assertBookingSuccess('change_booking_quantity', row, writeResult);
+    return {
+        typeDescription: row.TypeDescription ?? null,
+        requestedQty: normalizeInt(row.RequestedQty),
+        stocklevelForWarehouse: normalizeInt(row.StocklevelForWarehouse),
+        availableQty: normalizeInt(row.AvailableQty),
+        bookingQty: normalizeInt(row.BookingQty),
+        writeResult,
+    };
+}
+// Removes an already-existing line entirely (Sort.Lineref). Note the api_v2
+// param is misleadingly named "jobref_id" but per the doc it's the numeric
+// JobID (Jobs.JobNo), not the string Job_Ref.
+async function removeFromHiretrackBooking(input) {
+    const config = loadHiretrackConfig();
+    const baseUrl = config.hiretrack?.baseUrl;
+    if (!baseUrl) {
+        throw new Error('HireTrack baseUrl is not configured.');
+    }
+    const params = new URLSearchParams({
+        hiretrack_user_id: String(input.userId ?? config.hiretrack?.defaultUserId ?? FALLBACK_USER_ID),
+        hiretrack_client_id: String(input.clientId),
+        lineref_id: String(input.lineRefId),
+        jobref_id: String(input.jobId),
+    });
+    const url = `${baseUrl}/api_v2/remove_from_booking?${params.toString()}`;
+    const raw = await requestJson('PUT', url, config.hiretrack?.headers || {}, Number(config.poller?.timeoutMs || 15000));
+    if (!Array.isArray(raw) || raw.length === 0) {
+        throw new Error('HireTrack remove_from_booking returned no rows.');
+    }
+    const row = raw[0];
+    const writeResult = parseWriteResult(row);
+    assertBookingSuccess('remove_from_booking', row, writeResult);
+    return { writeResult };
 }

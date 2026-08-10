@@ -116,3 +116,42 @@ exports.createJobRouter.post('/jobs/:jobRef/lines', async (req, res) => {
         res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
     }
 });
+const changeQuantitySchema = zod_1.z.object({
+    quantity: zod_1.z.coerce.number().positive(),
+    clientId: zod_1.z.coerce.number().int().positive(),
+    userId: zod_1.z.coerce.number().int().optional(),
+});
+exports.createJobRouter.put('/jobs/:jobRef/lines/:lineRefId', async (req, res) => {
+    const parsed = changeQuantitySchema.safeParse(req.body);
+    const lineRefId = Number(req.params.lineRefId);
+    if (!parsed.success || !Number.isInteger(lineRefId) || lineRefId <= 0) {
+        res.status(400).json({ ok: false, error: 'Validation failed', issues: parsed.success ? undefined : parsed.error.flatten() });
+        return;
+    }
+    try {
+        const result = await (0, hiretrack_booking_api_1.changeHiretrackBookingQuantity)({ ...parsed.data, lineRefId });
+        res.json({ ok: true, ...result });
+    }
+    catch (error) {
+        res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+});
+const removeLineSchema = zod_1.z.object({
+    jobId: zod_1.z.coerce.number().int().positive(),
+    clientId: zod_1.z.coerce.number().int().positive(),
+});
+exports.createJobRouter.delete('/jobs/:jobRef/lines/:lineRefId', async (req, res) => {
+    const parsed = removeLineSchema.safeParse(req.query);
+    const lineRefId = Number(req.params.lineRefId);
+    if (!parsed.success || !Number.isInteger(lineRefId) || lineRefId <= 0) {
+        res.status(400).json({ ok: false, error: 'Validation failed', issues: parsed.success ? undefined : parsed.error.flatten() });
+        return;
+    }
+    try {
+        const result = await (0, hiretrack_booking_api_1.removeFromHiretrackBooking)({ ...parsed.data, lineRefId });
+        res.json({ ok: true, ...result });
+    }
+    catch (error) {
+        res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+});

@@ -235,8 +235,17 @@
         lineEl.innerHTML = `
           <span class="tree-line-name">${escapeHtml(line.name || '')} <span class="meta">#${line.typeId}</span></span>
           ${typeBadgeHtml(equipmentType)}
-          <span class="tree-line-qty">×${line.qty}</span>
+          <span class="tree-line-qty-prefix">×</span>
+          <input type="number" class="tree-line-qty-input" min="1" step="1" value="${line.qty}">
+          <button type="button" class="tree-line-remove">Удалить</button>
         `;
+        const qtyInput = lineEl.querySelector('.tree-line-qty-input');
+        qtyInput.addEventListener('change', () => {
+          const newQty = Math.max(1, Math.round(Number(qtyInput.value) || 1));
+          qtyInput.value = String(newQty);
+          if (newQty !== line.qty) changeExistingLineQuantity(loadedJob, line, newQty);
+        });
+        lineEl.querySelector('.tree-line-remove').addEventListener('click', () => removeExistingLine(loadedJob, line));
         sectionEl.appendChild(lineEl);
 
         if (equipmentType > 0 && components.length > 0) {
@@ -276,6 +285,43 @@
     }
   }
 
+  // Edit/remove target an already-persisted Sort row (Lineref) - different
+  // from the "lines being added" staging list above, which only has local,
+  // unsaved state until submit.
+  async function changeExistingLineQuantity(loadedJob, line, newQty) {
+    jobRefStatusEl.textContent = 'Сохраняем количество…';
+    try {
+      const res = await fetch(`/api/create-job/jobs/${encodeURIComponent(loadedJob.jobRef)}/lines/${line.lineRefId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quantity: newQty, clientId: loadedJob.clientId }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'Не удалось изменить количество');
+      jobRefStatusEl.textContent = '';
+      await openExistingJob(loadedJob.jobRef);
+    } catch (err) {
+      jobRefStatusEl.textContent = `Ошибка изменения количества: ${err.message}`;
+    }
+  }
+
+  async function removeExistingLine(loadedJob, line) {
+    if (!confirm(`Убрать «${line.name || ''}» из работы?`)) return;
+    jobRefStatusEl.textContent = 'Удаляем позицию…';
+    try {
+      const params = new URLSearchParams({ jobId: String(loadedJob.jobNo), clientId: String(loadedJob.clientId) });
+      const res = await fetch(`/api/create-job/jobs/${encodeURIComponent(loadedJob.jobRef)}/lines/${line.lineRefId}?${params.toString()}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'Не удалось удалить позицию');
+      jobRefStatusEl.textContent = '';
+      await openExistingJob(loadedJob.jobRef);
+    } catch (err) {
+      jobRefStatusEl.textContent = `Ошибка удаления: ${err.message}`;
+    }
+  }
+
   async function openExistingJob(jobRef) {
     if (!jobRef) {
       jobRefStatusEl.textContent = 'Введите номер работы или выберите из списка.';
@@ -294,6 +340,7 @@
 
       state.loadedJob = {
         jobRef: job.jobRef,
+        jobNo: job.jobNo,
         eqlistId: eqlist.eqlistId,
         clientId: eqlist.clientId,
         clientName: eqlist.clientName,

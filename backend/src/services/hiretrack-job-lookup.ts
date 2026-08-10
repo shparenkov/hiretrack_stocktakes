@@ -16,6 +16,9 @@ export interface HiretrackJobLookupLine {
   // type's `components` from the already-loaded catalog cache to render a
   // nested view for Composite/Alias lines, so no extra fetch is needed here.
   equipmentType: number | null;
+  // Sort.Lineref - what api_v2's change_booking_quantity/remove_from_booking
+  // target (the same value append_to_booking returns as LineRefID).
+  lineRefId: number;
 }
 
 export interface HiretrackJobLookupSection {
@@ -61,6 +64,7 @@ interface RawEqlistRow {
     Quant: number;
     SectionId: number | null;
     EquipmentType: number | null;
+    LineRefId: number;
   }[];
   sections: RawSectionRow[];
 }
@@ -167,6 +171,7 @@ export async function lookupHiretrackJob(jobRef: string): Promise<HiretrackJobLo
         qty: line.Quant,
         sectionId: line.SectionId ?? null,
         equipmentType: line.EquipmentType ?? null,
+        lineRefId: line.LineRefId,
       })),
     });
   }

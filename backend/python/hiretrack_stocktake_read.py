@@ -211,7 +211,8 @@ JOB_LOOKUP_EQLISTS_QUERY = """
 
 JOB_LOOKUP_SORT_QUERY = """
     SELECT S."Type" AS EquipmentTypeId, H."Description" AS EquipmentName, S."Quant",
-        S."sectionID" AS SectionId, CAST(H."EquipmentType" AS SMALLINT) AS EquipmentType
+        S."sectionID" AS SectionId, CAST(H."EquipmentType" AS SMALLINT) AS EquipmentType,
+        S."Lineref" AS LineRefId
     FROM "Sort" S
     LEFT JOIN "Hetype" H ON H."Type" = S."Type"
     WHERE S."Eqlno" = ?
