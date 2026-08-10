@@ -334,6 +334,11 @@
   // separate axis from EquipmentType. Only Consumable (1) gets its own badge.
   const CONSUMABLE_CLASS = 1;
 
+  // NewSales (2) and ExRentalSales (3) are stock the business sells rather
+  // than rents out - excluded from equipment search so it can't be booked
+  // onto a job (see buildSectionAddWidget's getMatches).
+  const SALES_CLASSES = new Set([2, 3]);
+
   function typeBadgeHtml(equipmentType, equipmentClass) {
     if ((equipmentType ?? 0) === 0 && equipmentClass === CONSUMABLE_CLASS) {
       return '<span class="type-badge consumable">C</span>';
@@ -761,11 +766,17 @@
         if (!state.catalogLoaded) return [];
         const q = query.toLowerCase();
         return state.catalog
+          // Sales stock (Class 2=ecNewSales, 3=ecExRentalSales) isn't rental
+          // inventory - exclude it from search so it can never be booked
+          // onto a job from here, even though it stays in state.catalogById
+          // for badge/component lookups on lines already on the job.
+          .filter((item) => !SALES_CLASSES.has(item.class))
           .filter((item) => `${item.name || ''} ${item.categoryName || ''} ${item.shortcode || ''} ${item.similarGroupName || ''}`.toLowerCase().includes(q))
           .slice(0, 8);
       },
       renderRow: (item, row) => {
         row.innerHTML = `
+          ${typeBadgeHtml(item.equipmentType, item.class)}
           <span class="section-add-result-name">${escapeHtml(item.name || '')}</span>
           <span class="section-add-result-avail pending">…</span>
         `;
