@@ -2,10 +2,11 @@ import { Request, Response, Router } from 'express';
 import { z } from 'zod';
 import { getEquipmentCatalog } from '../services/hiretrack-equipment-catalog';
 import { searchHiretrackCompanies } from '../services/hiretrack-company-search';
-import { lookupHiretrackJob, searchHiretrackJobs } from '../services/hiretrack-job-lookup';
+import { lookupHiretrackJob, searchHiretrackJobs, listRecentHiretrackJobs } from '../services/hiretrack-job-lookup';
 import {
   checkHiretrackAvailability,
   createHiretrackBooking,
+  createHiretrackJobShell,
   appendLinesToExistingBooking,
   changeHiretrackBookingQuantity,
   removeFromHiretrackBooking,
@@ -89,6 +90,38 @@ createJobRouter.get('/jobs', async (req: Request, res: Response) => {
   const query = typeof req.query.q === 'string' ? req.query.q : '';
   try {
     const jobs = await searchHiretrackJobs(query);
+    res.json({ ok: true, jobs });
+  } catch (error) {
+    res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+const createJobShellSchema = z.object({
+  jobName: z.string().min(1).max(50),
+  clientId: z.coerce.number().int().positive(),
+  dateFrom: z.string().min(1),
+  dateTo: z.string().min(1),
+  placeholderTypeId: z.coerce.number().int().positive(),
+});
+
+createJobRouter.post('/jobs', async (req: Request, res: Response) => {
+  const parsed = createJobShellSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ ok: false, error: 'Validation failed', issues: parsed.error.flatten() });
+    return;
+  }
+  try {
+    const result = await createHiretrackJobShell(parsed.data);
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// Registered before /jobs/:jobRef so "recent" isn't swallowed as a jobRef.
+createJobRouter.get('/jobs/recent', async (req: Request, res: Response) => {
+  try {
+    const jobs = await listRecentHiretrackJobs();
     res.json({ ok: true, jobs });
   } catch (error) {
     res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });

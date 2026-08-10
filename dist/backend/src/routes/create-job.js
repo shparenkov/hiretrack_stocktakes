@@ -83,6 +83,37 @@ exports.createJobRouter.get('/jobs', async (req, res) => {
         res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
     }
 });
+const createJobShellSchema = zod_1.z.object({
+    jobName: zod_1.z.string().min(1).max(50),
+    clientId: zod_1.z.coerce.number().int().positive(),
+    dateFrom: zod_1.z.string().min(1),
+    dateTo: zod_1.z.string().min(1),
+    placeholderTypeId: zod_1.z.coerce.number().int().positive(),
+});
+exports.createJobRouter.post('/jobs', async (req, res) => {
+    const parsed = createJobShellSchema.safeParse(req.body);
+    if (!parsed.success) {
+        res.status(400).json({ ok: false, error: 'Validation failed', issues: parsed.error.flatten() });
+        return;
+    }
+    try {
+        const result = await (0, hiretrack_booking_api_1.createHiretrackJobShell)(parsed.data);
+        res.json({ ok: true, ...result });
+    }
+    catch (error) {
+        res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+});
+// Registered before /jobs/:jobRef so "recent" isn't swallowed as a jobRef.
+exports.createJobRouter.get('/jobs/recent', async (req, res) => {
+    try {
+        const jobs = await (0, hiretrack_job_lookup_1.listRecentHiretrackJobs)();
+        res.json({ ok: true, jobs });
+    }
+    catch (error) {
+        res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+});
 exports.createJobRouter.get('/jobs/:jobRef', async (req, res) => {
     try {
         const job = await (0, hiretrack_job_lookup_1.lookupHiretrackJob)(String(req.params.jobRef));

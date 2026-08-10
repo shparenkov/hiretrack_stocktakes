@@ -309,6 +309,59 @@ export async function updateHiretrackEqlistDates(eqlistId: number, dateFrom: str
   });
 }
 
+export interface CreateJobShellInput {
+  jobName: string;
+  clientId: number;
+  dateFrom: string;
+  dateTo: string;
+  userId?: number;
+  warehouseId?: number;
+  pricelistId?: number;
+  // initialise_new_booking requires a valid hiretrack_type_id/quantity_required
+  // in its own params even though (see createHiretrackBooking's comment
+  // below) that embedded line never actually persists a Sort row - this
+  // value has no real effect on the result, it only satisfies the
+  // required-shape. Callers pass any real catalog typeId they already have
+  // loaded client-side.
+  placeholderTypeId: number;
+}
+
+export interface CreateJobShellResult {
+  jobId: number;
+  jobRef: string | null;
+  eqlistId: number;
+  eqRef: string | null;
+}
+
+// Creates an empty Job+Eqlist shell with no real equipment lines - for the
+// "just create the job header, then add equipment through the same
+// per-section UI as an existing job" flow. Deliberately does not append any
+// lines (unlike createHiretrackBooking below), so the placeholder type never
+// becomes a real Sort row either.
+export async function createHiretrackJobShell(input: CreateJobShellInput): Promise<CreateJobShellResult> {
+  const init = await initialiseHiretrackBooking({
+    typeId: input.placeholderTypeId,
+    quantity: 1,
+    dateFrom: input.dateFrom,
+    dateTo: input.dateTo,
+    jobName: input.jobName,
+    userId: input.userId,
+    clientId: input.clientId,
+    warehouseId: input.warehouseId,
+    pricelistId: input.pricelistId,
+  });
+  if (!init.jobId || !init.eqlistId) {
+    throw new Error(`HireTrack initialise_new_booking did not return a JobID/EqlistID: ${JSON.stringify(init)}`);
+  }
+
+  // Same api_v2 date-clamp bug as createHiretrackBooking - initialise_new_booking
+  // never forwards availability_datetime_from/to to CreateNewEqlist, so it
+  // always falls back to a past-date safety clamp. Correct it directly.
+  await updateHiretrackEqlistDates(init.eqlistId, input.dateFrom, input.dateTo);
+
+  return { jobId: init.jobId, jobRef: init.jobRef, eqlistId: init.eqlistId, eqRef: init.eqRef };
+}
+
 // Batches initialise_new_booking (creates the Job+Eqlist shell) +
 // append_to_booking (every line, including the "first" one) into one call,
 // mirroring createEquipmentNoteWithLines's shape. Callers (the rider-matching

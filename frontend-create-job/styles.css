@@ -95,18 +95,23 @@ main {
   font-weight: 600;
 }
 
-.client-picker, .equipment-picker { position: relative; }
+.client-picker, .job-picker { position: relative; }
 
-#client-search, #equipment-search {
+#client-search {
   width: 100%;
   font: 14px Arial, sans-serif;
   padding: 9px 11px;
   border: 1px solid var(--line);
 }
 
-#client-search:focus, #equipment-search:focus { outline: 2px solid var(--blue); outline-offset: -1px; }
+#client-search:focus { outline: 2px solid var(--blue); outline-offset: -1px; }
 
-.client-results, .equipment-results {
+/* Shared dropdown container for every "search and pick one" widget backed
+   by createSearchDropdown (job search, client search) - one look for all of
+   them. The per-section equipment-add widget has its own narrower version
+   (.section-add-results) since it's indented inside a tree line, not a
+   top-level picker, but its rows reuse the same .result-row class below. */
+.dropdown-results {
   position: absolute;
   z-index: 5;
   top: calc(100% + 2px);
@@ -127,7 +132,8 @@ main {
   border-bottom: 1px solid #eef2f5;
 }
 
-.result-row:hover { background: #eef4fb; }
+.result-row:hover,
+.result-row.highlighted { background: #eef4fb; }
 .result-row .name { font-weight: 700; color: #18212b; }
 .result-row .meta { color: var(--muted); font-size: 12px; }
 
@@ -156,54 +162,6 @@ main {
   min-height: 16px;
 }
 
-.lines-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: 12px;
-}
-
-.lines-table th {
-  text-align: left;
-  padding: 8px 10px;
-  background: var(--blue);
-  color: #fff;
-  font-size: 12px;
-}
-
-.lines-table td {
-  padding: 8px 10px;
-  border-bottom: 1px solid #eef2f5;
-  vertical-align: middle;
-}
-
-.lines-table input[type="number"] {
-  width: 70px;
-  padding: 5px 6px;
-  border: 1px solid var(--line);
-  font: 13px Arial, sans-serif;
-}
-
-.remove-line {
-  border: 1px solid var(--line);
-  background: #fff;
-  color: var(--red);
-  cursor: pointer;
-  padding: 4px 9px;
-}
-
-.availability-badge {
-  font-weight: 700;
-  padding: 2px 8px;
-  display: inline-block;
-}
-
-.availability-badge.ok { color: var(--green); }
-.availability-badge.low { color: #a15b12; }
-.availability-badge.none { color: var(--red); }
-.availability-badge.pending { color: var(--muted); font-weight: 400; }
-
-.empty-hint { color: var(--muted); margin: 12px 0 0; }
-
 .mode-toggle { display: flex; gap: 10px; }
 
 .mode-btn {
@@ -218,8 +176,6 @@ main {
 
 .mode-btn.active { background: var(--navy); color: #fff; border-color: var(--navy); }
 
-.job-picker { position: relative; }
-
 #job-ref-search {
   width: 100%;
   font: 14px Arial, sans-serif;
@@ -228,19 +184,6 @@ main {
 }
 
 #job-ref-search:focus { outline: 2px solid var(--blue); outline-offset: -1px; }
-
-.job-ref-results {
-  position: absolute;
-  z-index: 5;
-  top: calc(100% + 2px);
-  left: 0;
-  right: 0;
-  max-height: 260px;
-  overflow-y: auto;
-  background: #fff;
-  border: 1px solid var(--line);
-  box-shadow: 0 6px 14px rgba(0,0,0,.12);
-}
 
 .job-loaded-info { margin-top: 14px; }
 .job-loaded-info p { margin: 0 0 8px; }
@@ -349,16 +292,9 @@ main {
   box-shadow: 0 6px 14px rgba(0,0,0,.12);
 }
 
-.section-add-result-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
-  cursor: pointer;
-  border-bottom: 1px solid #eef2f5;
-}
-.section-add-result-row:hover,
-.section-add-result-row.highlighted { background: #eef4fb; }
+/* Section-add rows share the base .result-row look (padding/border/hover/
+   highlighted) - these just lay out its two children (name + availability). */
+.section-add-results .result-row { display: flex; align-items: center; gap: 8px; }
 .section-add-result-name { flex: 1; }
 
 .section-add-result-avail { font: 700 12px Arial, sans-serif; min-width: 44px; text-align: right; }
@@ -366,8 +302,6 @@ main {
 .section-add-result-avail.low { color: var(--yellow); }
 .section-add-result-avail.none { color: var(--red); }
 .section-add-result-avail.pending { color: var(--muted); font-weight: 400; }
-
-.section-add-empty { padding: 9px 11px; color: var(--muted); }
 
 .tree-add-section {
   display: flex;
@@ -505,3 +439,37 @@ main {
 .result.error { background: #fbecea; border-color: #e6b3ab; color: var(--red); }
 
 .result a { color: inherit; font-weight: 700; }
+
+/* Recent-jobs cards on the "open existing job" search page - visual style
+   lifted from the Daybook (План склада) page's .job card: white card,
+   left accent border, soft shadow, bold navy title, muted meta line. No
+   progress bar/expand here (that's Daybook-specific equipment-return
+   tracking) - just enough to identify and jump to a job. */
+.recent-jobs-label {
+  margin: 16px 0 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.recent-jobs-grid { display: grid; gap: 10px; }
+
+.job-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--blue);
+  background: #fff;
+  box-shadow: 0 3px 10px rgba(24,33,43,.08);
+  padding: 12px 14px;
+  cursor: pointer;
+  font: inherit;
+}
+.job-card:hover { background: #edf6fd; }
+
+.job-card-ref { display: block; color: var(--navy); font-size: 15px; font-weight: 800; }
+.job-card-title { display: block; margin-top: 3px; color: #18212b; font-size: 13px; font-weight: 600; }
+.job-card-meta { display: block; margin-top: 5px; color: var(--muted); font-size: 12px; }

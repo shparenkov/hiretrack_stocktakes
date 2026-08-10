@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.checkHiretrackAvailability = checkHiretrackAvailability;
 exports.initialiseHiretrackBooking = initialiseHiretrackBooking;
 exports.updateHiretrackEqlistDates = updateHiretrackEqlistDates;
+exports.createHiretrackJobShell = createHiretrackJobShell;
 exports.createHiretrackBooking = createHiretrackBooking;
 exports.appendLinesToExistingBooking = appendLinesToExistingBooking;
 exports.appendToHiretrackBooking = appendToHiretrackBooking;
@@ -206,6 +207,32 @@ async function updateHiretrackEqlistDates(eqlistId, dateFrom, dateTo) {
         dateFrom,
         dateTo,
     });
+}
+// Creates an empty Job+Eqlist shell with no real equipment lines - for the
+// "just create the job header, then add equipment through the same
+// per-section UI as an existing job" flow. Deliberately does not append any
+// lines (unlike createHiretrackBooking below), so the placeholder type never
+// becomes a real Sort row either.
+async function createHiretrackJobShell(input) {
+    const init = await initialiseHiretrackBooking({
+        typeId: input.placeholderTypeId,
+        quantity: 1,
+        dateFrom: input.dateFrom,
+        dateTo: input.dateTo,
+        jobName: input.jobName,
+        userId: input.userId,
+        clientId: input.clientId,
+        warehouseId: input.warehouseId,
+        pricelistId: input.pricelistId,
+    });
+    if (!init.jobId || !init.eqlistId) {
+        throw new Error(`HireTrack initialise_new_booking did not return a JobID/EqlistID: ${JSON.stringify(init)}`);
+    }
+    // Same api_v2 date-clamp bug as createHiretrackBooking - initialise_new_booking
+    // never forwards availability_datetime_from/to to CreateNewEqlist, so it
+    // always falls back to a past-date safety clamp. Correct it directly.
+    await updateHiretrackEqlistDates(init.eqlistId, input.dateFrom, input.dateTo);
+    return { jobId: init.jobId, jobRef: init.jobRef, eqlistId: init.eqlistId, eqRef: init.eqRef };
 }
 // Batches initialise_new_booking (creates the Job+Eqlist shell) +
 // append_to_booking (every line, including the "first" one) into one call,

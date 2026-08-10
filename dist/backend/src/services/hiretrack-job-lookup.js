@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.searchHiretrackJobs = searchHiretrackJobs;
+exports.listRecentHiretrackJobs = listRecentHiretrackJobs;
 exports.lookupHiretrackJob = lookupHiretrackJob;
 const hiretrack_odbc_read_1 = require("./hiretrack-odbc-read");
 const hiretrack_booking_api_1 = require("./hiretrack-booking-api");
@@ -21,6 +22,23 @@ async function searchHiretrackJobs(query) {
         jobRef: row.Job_Ref,
         jobTitle: row.Job_Title ?? null,
         clientName: row.Name ?? null,
+    }));
+}
+// Recently-created jobs (Jobs.CreatedDate, a real TIMESTAMP column) for the
+// "open existing job" search page's card list, shown before the user types
+// anything - lets a user jump straight to a job they (or a colleague) just
+// created instead of re-typing its name/ref.
+async function listRecentHiretrackJobs(days = 7) {
+    const rows = await (0, hiretrack_odbc_read_1.runHiretrackOdbcRead)({
+        operation: 'job-recent',
+        days,
+    });
+    return rows.map((row) => ({
+        jobNo: row.JobNo,
+        jobRef: row.Job_Ref,
+        jobTitle: row.Job_Title ?? null,
+        clientName: row.Name ?? null,
+        createdDate: row.CreatedDate,
     }));
 }
 // Drops any fractional-second component and normalizes to a bare space

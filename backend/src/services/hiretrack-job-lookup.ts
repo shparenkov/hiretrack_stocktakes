@@ -117,6 +117,41 @@ export async function searchHiretrackJobs(query: string): Promise<HiretrackJobSe
   }));
 }
 
+export interface HiretrackRecentJobResult {
+  jobNo: number;
+  jobRef: string;
+  jobTitle: string | null;
+  clientName: string | null;
+  createdDate: string;
+}
+
+interface RawJobRecentRow {
+  JobNo: number;
+  Job_Ref: string;
+  Job_Title: string | null;
+  Name: string | null;
+  CreatedDate: string;
+}
+
+// Recently-created jobs (Jobs.CreatedDate, a real TIMESTAMP column) for the
+// "open existing job" search page's card list, shown before the user types
+// anything - lets a user jump straight to a job they (or a colleague) just
+// created instead of re-typing its name/ref.
+export async function listRecentHiretrackJobs(days = 7): Promise<HiretrackRecentJobResult[]> {
+  const rows = await runHiretrackOdbcRead<RawJobRecentRow[]>({
+    operation: 'job-recent',
+    days,
+  });
+
+  return rows.map((row) => ({
+    jobNo: row.JobNo,
+    jobRef: row.Job_Ref,
+    jobTitle: row.Job_Title ?? null,
+    clientName: row.Name ?? null,
+    createdDate: row.CreatedDate,
+  }));
+}
+
 // Drops any fractional-second component and normalizes to a bare space
 // separator ("YYYY-MM-DD HH:MM:SS") - the ODBC bridge serializes datetimes
 // via Python's .isoformat(), which is "T"-separated and includes

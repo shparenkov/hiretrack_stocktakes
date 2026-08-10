@@ -1,7 +1,7 @@
 import json
 import os
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import pyodbc
 
@@ -190,6 +190,18 @@ JOB_SEARCH_QUERY = """
     ORDER BY "JobNo" DESC
 """
 
+# Recently-created jobs, shown as cards on the "open existing job" search
+# page before the user types anything. Jobs.CreatedDate is a real TIMESTAMP
+# (confirmed live via cur.columns()), not a bare-string-bindable value - the
+# cutoff is computed as a real datetime here, same reasoning as every other
+# NexusDB timestamp bind in this codebase.
+JOB_RECENT_QUERY = """
+    SELECT TOP 20 "JobNo", "Job_Ref", "Job_Title", "Name", "CreatedDate"
+    FROM "Jobs"
+    WHERE "CreatedDate" >= ?
+    ORDER BY "CreatedDate" DESC
+"""
+
 # "Open an existing job" lookup for the create-job page - job ref -> its
 # Eqlists (each with its real DateOut/DateBack, since append_to_booking must
 # match those exactly - see EQUIPMENT_CATALOG_MATCH_BLUEPRINT.md) and their
@@ -368,6 +380,13 @@ def read_job_search(cursor, query_text):
     return rows_as_dicts(cursor)
 
 
+def read_job_recent(cursor, params):
+    days = params.get("days") or 7
+    cutoff = datetime.now() - timedelta(days=int(days))
+    cursor.execute(JOB_RECENT_QUERY, cutoff)
+    return rows_as_dicts(cursor)
+
+
 def read_job_lookup(cursor, job_ref):
     if not job_ref or not str(job_ref).strip():
         raise ValueError("job-lookup requires a 'jobRef'")
@@ -415,6 +434,8 @@ def main():
             result = read_job_lookup(cursor, request.get("jobRef"))
         elif operation == "job-search":
             result = read_job_search(cursor, request.get("query"))
+        elif operation == "job-recent":
+            result = read_job_recent(cursor, request)
         else:
             raise ValueError(f"Unsupported HireTrack read operation: {operation}")
         json.dump({"ok": True, "result": result}, sys.stdout, ensure_ascii=False)

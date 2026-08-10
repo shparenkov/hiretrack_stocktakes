@@ -5,8 +5,7 @@
     catalogById: new Map(),
     catalogLoaded: false,
     selectedClient: null,
-    loadedJob: null, // { jobRef, eqlistId, clientId, clientName, dateFrom, dateTo, existingLines }
-    lines: [], // { typeId, name, categoryName, qty, availability: null | { availableQty, stocklevelForWarehouse, status: 'pending'|'ok'|'low'|'none'|'error' } }
+    loadedJob: null, // { jobRef, eqlistId, clientId, clientName, dateFrom, dateTo, existingSections, existingLines }
     // typeId -> { availableQty, stocklevelForWarehouse }. Scoped to the
     // currently loaded job's fixed date range - fetched at most once per
     // typeId per job (reused across every search result, tree line, and
@@ -20,13 +19,13 @@
   const modeExistingBtn = document.getElementById('mode-existing');
   const newJobCard = document.getElementById('new-job-card');
   const newJobClientCard = document.getElementById('new-job-client-card');
+  const newJobSubmitCard = document.getElementById('new-job-submit-card');
   const existingJobCard = document.getElementById('existing-job-card');
-  const equipmentCardEl = document.getElementById('equipment-card');
-  const submitCardEl = document.querySelector('.submit-card');
 
   const jobRefSearchInput = document.getElementById('job-ref-search');
   const jobRefResultsEl = document.getElementById('job-ref-results');
   const jobRefStatusEl = document.getElementById('job-ref-status');
+  const recentJobsEl = document.getElementById('recent-jobs');
   const jobLoadedInfoEl = document.getElementById('job-loaded-info');
   const jobLoadedRefEl = document.getElementById('job-loaded-ref');
   const jobLoadedClientEl = document.getElementById('job-loaded-client');
@@ -46,12 +45,7 @@
   const clientSelectedNameEl = document.getElementById('client-selected-name');
   const clientClearBtn = document.getElementById('client-clear');
 
-  const equipmentSearchInput = document.getElementById('equipment-search');
-  const equipmentResultsEl = document.getElementById('equipment-results');
   const loadStatusEl = document.getElementById('load-status');
-
-  const linesBodyEl = document.getElementById('lines-body');
-  const linesEmptyEl = document.getElementById('lines-empty');
 
   const submitBtn = document.getElementById('submit-btn');
   const resultEl = document.getElementById('result');
@@ -64,18 +58,19 @@
     };
   }
 
+  function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+  }
+
   function toHiretrackDateTime(localValue) {
     if (!localValue) return null;
     // "YYYY-MM-DDTHH:MM" -> "YYYY-MM-DD HH:MM:SS"
     return localValue.replace('T', ' ') + ':00';
   }
 
+  // Only relevant to new-job mode - existing-job mode's dates always come
+  // from the loaded job itself (fixed, see EQUIPMENT_CATALOG_MATCH_BLUEPRINT.md).
   function getDateRange() {
-    if (state.mode === 'existing') {
-      return state.loadedJob
-        ? { dateFrom: state.loadedJob.dateFrom, dateTo: state.loadedJob.dateTo }
-        : { dateFrom: null, dateTo: null };
-    }
     return { dateFrom: toHiretrackDateTime(dateFromInput.value), dateTo: toHiretrackDateTime(dateToInput.value) };
   }
 
@@ -94,10 +89,6 @@
   // immediately instead of only surfacing after HireTrack gets the wrong
   // dates. Also flags "range error" is dateTo <= dateFrom.
   function updateDateReadbacks() {
-    if (state.mode === 'existing') {
-      dateRangeErrorEl.classList.add('hidden');
-      return true;
-    }
     for (const [input, el] of [[dateFromInput, dateFromReadbackEl], [dateToInput, dateToReadbackEl]]) {
       if (!input.value) {
         el.textContent = 'не указано';
@@ -115,6 +106,123 @@
     return !rangeInvalid;
   }
 
+  // ============================================================
+  // Generic type-ahead dropdown, shared by every "search and pick
+  // one" UI in this app (job search, client search, per-section
+  // equipment search) - one engine, one keyboard/behavior contract,
+  // instead of a subtly different implementation per widget.
+  //
+  // Behavior: debounced search-as-you-type, ArrowUp/ArrowDown moves a
+  // highlighted result (optionally notifying onHighlightChange, e.g. to
+  // shift focus into a companion field), Enter picks the highlighted-or-top
+  // result, Escape closes, clicking outside closes, and a row is selected
+  // on mousedown (not click) so it fires before the input's blur would
+  // otherwise close the dropdown first.
+  // ============================================================
+  function createSearchDropdown({
+    inputEl,
+    resultsEl,
+    companionEl,
+    minChars = 2,
+    debounceMs = 250,
+    getMatches,
+    renderRow,
+    onSelect,
+    onHighlightChange,
+    emptyText = 'Ничего не найдено',
+  }) {
+    let matches = [];
+    let highlightedIndex = -1;
+
+    function close() {
+      resultsEl.classList.add('hidden');
+      resultsEl.innerHTML = '';
+      matches = [];
+      highlightedIndex = -1;
+    }
+
+    function setHighlighted(index) {
+      const rows = [...resultsEl.querySelectorAll('.result-row')];
+      rows.forEach((row, i) => row.classList.toggle('highlighted', i === index));
+      if (index >= 0 && rows[index]) rows[index].scrollIntoView({ block: 'nearest' });
+      highlightedIndex = index;
+      if (onHighlightChange) onHighlightChange(matches[index], index);
+    }
+
+    function select(item) {
+      close();
+      onSelect(item);
+    }
+
+    async function runSearch(query) {
+      const q = query.trim();
+      if (q.length < minChars) {
+        close();
+        return;
+      }
+      let results;
+      try {
+        results = (await getMatches(q)) || [];
+      } catch (err) {
+        resultsEl.innerHTML = `<div class="result-row">Ошибка: ${escapeHtml(err.message)}</div>`;
+        resultsEl.classList.remove('hidden');
+        matches = [];
+        highlightedIndex = -1;
+        return;
+      }
+      matches = results;
+      if (matches.length === 0) {
+        resultsEl.innerHTML = `<div class="result-row">${escapeHtml(emptyText)}</div>`;
+        resultsEl.classList.remove('hidden');
+        highlightedIndex = -1;
+        return;
+      }
+      resultsEl.innerHTML = '';
+      matches.forEach((item) => {
+        const row = document.createElement('div');
+        row.className = 'result-row';
+        renderRow(item, row);
+        row.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          select(item);
+        });
+        resultsEl.appendChild(row);
+      });
+      resultsEl.classList.remove('hidden');
+      highlightedIndex = -1;
+    }
+
+    function handleKeydown(e) {
+      if (e.key === 'ArrowDown') {
+        if (matches.length === 0) return;
+        e.preventDefault();
+        setHighlighted(Math.min(highlightedIndex + 1, matches.length - 1));
+      } else if (e.key === 'ArrowUp') {
+        if (matches.length === 0) return;
+        e.preventDefault();
+        setHighlighted(Math.max(highlightedIndex - 1, 0));
+      } else if (e.key === 'Enter') {
+        if (matches.length === 0) return;
+        e.preventDefault();
+        select(matches[highlightedIndex >= 0 ? highlightedIndex : 0]);
+      } else if (e.key === 'Escape') {
+        close();
+      }
+    }
+
+    const debouncedSearch = debounce(() => runSearch(inputEl.value), debounceMs);
+    inputEl.addEventListener('input', debouncedSearch);
+    inputEl.addEventListener('keydown', handleKeydown);
+    if (companionEl) companionEl.addEventListener('keydown', handleKeydown);
+
+    document.addEventListener('click', (e) => {
+      if (e.target === inputEl || (companionEl && e.target === companionEl) || resultsEl.contains(e.target)) return;
+      close();
+    });
+
+    return { close };
+  }
+
   // --- Mode toggle (new job vs open an existing one) ---
   function setMode(mode) {
     state.mode = mode;
@@ -122,70 +230,91 @@
     modeExistingBtn.classList.toggle('active', mode === 'existing');
     newJobCard.classList.toggle('hidden', mode !== 'new');
     newJobClientCard.classList.toggle('hidden', mode !== 'new');
+    newJobSubmitCard.classList.toggle('hidden', mode !== 'new');
     existingJobCard.classList.toggle('hidden', mode !== 'existing');
-    // Existing-job mode adds equipment directly per-section (top of each
-    // section in the tree, see buildSectionAddWidget) instead of through
-    // this shared staging table + batch submit - hide both entirely.
-    equipmentCardEl.classList.toggle('hidden', mode === 'existing');
-    submitCardEl.classList.toggle('hidden', mode === 'existing');
-    submitBtn.textContent = 'Создать работу в HireTrack';
     resultEl.classList.add('hidden');
-    state.lines = [];
-    renderLines();
+    if (mode === 'existing' && !state.loadedJob) {
+      loadRecentJobs();
+    }
     updateSubmitState();
   }
 
   modeNewBtn.addEventListener('click', () => setMode('new'));
   modeExistingBtn.addEventListener('click', () => setMode('existing'));
 
-  // Interactive job search: users know the client/job name, not the job
-  // number, so typing a name suggests matching job numbers to pick from -
-  // same debounced-dropdown pattern as the client search above.
-  const searchJobs = debounce(async (query) => {
-    if (query.trim().length < 2) {
-      jobRefResultsEl.classList.add('hidden');
-      jobRefResultsEl.innerHTML = '';
-      return;
-    }
-    try {
+  function resetNewJobForm() {
+    jobNameInput.value = '';
+    dateFromInput.value = '';
+    dateToInput.value = '';
+    updateDateReadbacks();
+    state.selectedClient = null;
+    clientSelectedEl.classList.add('hidden');
+    clientSearchInput.value = '';
+    clientSearchInput.classList.remove('hidden');
+  }
+
+  // --- Job search + recent jobs (existing-job mode) ---
+  createSearchDropdown({
+    inputEl: jobRefSearchInput,
+    resultsEl: jobRefResultsEl,
+    getMatches: async (query) => {
       const res = await fetch(`/api/create-job/jobs?q=${encodeURIComponent(query)}`);
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'Ошибка поиска работы');
-      renderJobResults(data.jobs || []);
-    } catch (err) {
-      jobRefResultsEl.innerHTML = `<div class="result-row">Ошибка: ${escapeHtml(err.message)}</div>`;
-      jobRefResultsEl.classList.remove('hidden');
-    }
-  }, 300);
-
-  function renderJobResults(jobs) {
-    if (jobs.length === 0) {
-      jobRefResultsEl.innerHTML = '<div class="result-row">Ничего не найдено</div>';
-      jobRefResultsEl.classList.remove('hidden');
-      return;
-    }
-    jobRefResultsEl.innerHTML = '';
-    for (const job of jobs) {
-      const row = document.createElement('div');
-      row.className = 'result-row';
+      return data.jobs || [];
+    },
+    renderRow: (job, row) => {
       const title = job.jobTitle || job.clientName || '';
       row.innerHTML = `<div class="name">${escapeHtml(job.jobRef)} ${title ? '· ' + escapeHtml(title) : ''}</div><div class="meta">${escapeHtml(job.clientName || '')}</div>`;
-      row.addEventListener('click', () => {
-        jobRefSearchInput.value = job.jobRef;
-        jobRefResultsEl.classList.add('hidden');
-        openExistingJob(job.jobRef);
-      });
-      jobRefResultsEl.appendChild(row);
+    },
+    onSelect: (job) => {
+      jobRefSearchInput.value = job.jobRef;
+      openExistingJob(job.jobRef);
+    },
+  });
+
+  // Recently-created jobs (Jobs.CreatedDate, -7 days for now) shown as
+  // cards below the search box before a job is loaded, so a job someone
+  // just created doesn't need to be re-typed to find.
+  async function loadRecentJobs() {
+    try {
+      const res = await fetch('/api/create-job/jobs/recent');
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'Ошибка загрузки последних работ');
+      renderRecentJobs(data.jobs || []);
+    } catch (err) {
+      recentJobsEl.innerHTML = '';
     }
-    jobRefResultsEl.classList.remove('hidden');
   }
 
-  jobRefSearchInput.addEventListener('input', () => searchJobs(jobRefSearchInput.value));
-  document.addEventListener('click', (e) => {
-    if (!e.target.closest('.job-picker')) {
-      jobRefResultsEl.classList.add('hidden');
+  function renderRecentJobs(jobs) {
+    recentJobsEl.innerHTML = '';
+    if (state.loadedJob || jobs.length === 0) return;
+    const label = document.createElement('div');
+    label.className = 'recent-jobs-label';
+    label.textContent = 'Недавно созданные (7 дней)';
+    const grid = document.createElement('div');
+    grid.className = 'recent-jobs-grid';
+    for (const job of jobs) {
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'job-card';
+      const created = new Date((job.createdDate || '').replace(' ', 'T'));
+      const createdText = Number.isNaN(created.getTime()) ? '' : READBACK_FORMATTER.format(created);
+      const metaParts = [job.clientName, createdText].filter(Boolean);
+      card.innerHTML = `
+        <span class="job-card-ref">${escapeHtml(job.jobRef)}</span>
+        ${job.jobTitle ? `<span class="job-card-title">${escapeHtml(job.jobTitle)}</span>` : ''}
+        <span class="job-card-meta">${escapeHtml(metaParts.join(' · '))}</span>
+      `;
+      card.addEventListener('click', () => {
+        jobRefSearchInput.value = job.jobRef;
+        openExistingJob(job.jobRef);
+      });
+      grid.appendChild(card);
     }
-  });
+    recentJobsEl.append(label, grid);
+  }
 
   // TEquipmentType: 0=etSimple, 1=etCompositeKit, 2=etAliasKit,
   // 3=etPricedAliasKit, 4=etMarkup. Single-letter badges, first letter of
@@ -216,8 +345,8 @@
   // Builds one line's DOM (its .tree-line, plus a sibling .tree-components
   // if it's a Composite/Alias with catalog-known components) but does not
   // attach it anywhere - callers append it wherever it belongs. Shared by
-  // the full-section render below and the seamless single-line insert used
-  // when a section's "add equipment" widget adds a new line.
+  // the full-section render, the single-line seamless insert, and the
+  // single-section seamless re-render used after removing a line.
   function buildTreeLineNode(loadedJob, line, linesByType) {
     const catalogItem = state.catalogById.get(line.typeId);
     const equipmentType = line.equipmentType ?? catalogItem?.equipmentType ?? 0;
@@ -309,11 +438,67 @@
     }
   }
 
+  // Rebuilds just one section's line listing (everything after its header
+  // and, for real sections, its add-widget) from loadedJob.existingLines -
+  // used after removing a line, so a Composite whose absorbed component was
+  // just removed re-evaluates correctly, without refetching the job or
+  // touching any other section. Real sections carry data-sectionId; the
+  // "Без секции" bucket doesn't, and removes itself entirely when empty.
+  function rerenderSectionLines(loadedJob, sectionEl) {
+    const sectionIdAttr = sectionEl.dataset.sectionId;
+    const isRealSection = sectionIdAttr != null;
+    const keepCount = isRealSection ? 2 : 1;
+    while (sectionEl.children.length > keepCount) sectionEl.lastElementChild.remove();
+
+    const sectionLines = isRealSection
+      ? loadedJob.existingLines.filter((l) => String(l.sectionId) === sectionIdAttr)
+      : loadedJob.existingLines.filter((l) => l.sectionId == null);
+
+    if (sectionLines.length > 0) {
+      renderLinesIntoSection(sectionEl, sectionLines, loadedJob);
+    } else if (isRealSection) {
+      const emptyEl = document.createElement('div');
+      emptyEl.className = 'tree-section-empty';
+      emptyEl.textContent = 'В этой секции пока нет оборудования.';
+      sectionEl.appendChild(emptyEl);
+    } else {
+      sectionEl.remove();
+    }
+  }
+
+  // Rebuilds (creates/updates/removes) the "Без секции" bucket to reflect
+  // loadedJob.existingLines' current sectionId==null lines - used after
+  // deleting a section, which reassigns its lines to no-section server-side.
+  function refreshUnsectionedBucket(loadedJob) {
+    const unsectionedLines = loadedJob.existingLines.filter((l) => l.sectionId == null);
+    let sectionEl = [...existingLinesTreeEl.querySelectorAll('.tree-section')].find((el) => el.dataset.sectionId == null);
+
+    if (unsectionedLines.length === 0) {
+      if (sectionEl) sectionEl.remove();
+      return;
+    }
+
+    if (!sectionEl) {
+      sectionEl = document.createElement('div');
+      sectionEl.className = 'tree-section';
+      const header = document.createElement('div');
+      header.className = 'tree-section-header';
+      header.innerHTML = '<span class="tree-section-title">Без секции</span>';
+      sectionEl.appendChild(header);
+      // "+ Добавить секцию" is always the tree's last child (see
+      // renderExistingLinesTree) - insert the bucket right before it.
+      existingLinesTreeEl.insertBefore(sectionEl, existingLinesTreeEl.lastElementChild);
+    }
+
+    rerenderSectionLines(loadedJob, sectionEl);
+  }
+
   // Section header with inline rename (pencil -> text input, commits on
   // blur/Enter, Escape cancels) and delete (confirm() before calling the
-  // API - a real EqSections row, not just a UI grouping). Rename mutates
-  // section.sectionText in place instead of a full reload, matching the
-  // same "seamless edit" pattern as changeExistingLineQuantity.
+  // API - a real EqSections row, not just a UI grouping). Both mutate
+  // loadedJob/the DOM directly instead of a full reload - rename edits
+  // section.sectionText in place, delete removes just this section's node
+  // and refreshes the "Без секции" bucket with its reassigned lines.
   function buildSectionHeader(loadedJob, section) {
     const header = document.createElement('div');
     header.className = 'tree-section-header';
@@ -403,7 +588,14 @@
         const data = await res.json();
         if (!data.ok) throw new Error(data.error || 'Не удалось удалить секцию');
         jobRefStatusEl.textContent = '';
-        await openExistingJob(loadedJob.jobRef);
+
+        loadedJob.existingSections = loadedJob.existingSections.filter((s) => s.sectionId !== section.sectionId);
+        for (const line of loadedJob.existingLines) {
+          if (line.sectionId === section.sectionId) line.sectionId = null;
+        }
+        const sectionEl = existingLinesTreeEl.querySelector(`.tree-section[data-section-id="${section.sectionId}"]`);
+        if (sectionEl) sectionEl.remove();
+        refreshUnsectionedBucket(loadedJob);
       } catch (err) {
         jobRefStatusEl.textContent = `Ошибка удаления секции: ${err.message}`;
       }
@@ -440,6 +632,8 @@
         const data = await res.json();
         if (!data.ok) throw new Error(data.error || 'Не удалось добавить секцию');
         jobRefStatusEl.textContent = '';
+        // Adding/renumbering sections is rare and touches sortOrder for the
+        // whole tree - a full reload here is fine (unlike line add/remove).
         await openExistingJob(loadedJob.jobRef);
       } catch (err) {
         jobRefStatusEl.textContent = `Ошибка добавления секции: ${err.message}`;
@@ -528,9 +722,9 @@
 
   // Per-section "add equipment" widget, rendered at the top of every real
   // section - search with an inline qty field nested right inside the same
-  // box, arrow-key/Enter selection, and availability shown directly on each
-  // result row ("10/10"), all aimed at fast consecutive entry without a
-  // separate staging table.
+  // box, arrow-key/Enter selection (via createSearchDropdown), and
+  // availability shown directly on each result row ("10/10"), all aimed at
+  // fast consecutive entry without a separate staging table.
   //
   // Keyboard flow: type to filter -> ArrowUp/ArrowDown highlights a result
   // AND moves focus into the qty field (so the very next keystrokes are the
@@ -551,95 +745,31 @@
     const qtyInput = wrap.querySelector('.section-add-qty');
     const resultsEl = wrap.querySelector('.section-add-results');
 
-    let matches = [];
-    let highlightedIndex = -1;
-
-    const closeResults = () => {
-      resultsEl.classList.add('hidden');
-      resultsEl.innerHTML = '';
-      matches = [];
-      highlightedIndex = -1;
-    };
-
-    const setHighlighted = (index) => {
-      const rows = [...resultsEl.querySelectorAll('.section-add-result-row')];
-      rows.forEach((row, i) => row.classList.toggle('highlighted', i === index));
-      if (index >= 0 && rows[index]) rows[index].scrollIntoView({ block: 'nearest' });
-      highlightedIndex = index;
-    };
-
-    const focusQty = () => {
-      qtyInput.focus();
-      qtyInput.select();
-    };
-
-    const commitAdd = (typeId) => {
+    const commitAdd = (item) => {
       const qty = Math.max(1, Math.round(Number(qtyInput.value) || 1));
-      closeResults();
       searchInput.value = '';
       qtyInput.value = '1';
-      addEquipmentToSection(loadedJob, section, typeId, qty);
+      addEquipmentToSection(loadedJob, section, item.typeId, qty);
     };
 
-    // ArrowUp/Down always drive result navigation, even while focus is in
-    // the qty field (which would otherwise treat them as its own native
-    // step up/down) - the qty field is for typing a number, not stepping it.
-    const handleNavKeydown = (e) => {
-      if (e.key === 'ArrowDown') {
-        if (matches.length === 0) return;
-        e.preventDefault();
-        setHighlighted(Math.min(highlightedIndex + 1, matches.length - 1));
-        focusQty();
-      } else if (e.key === 'ArrowUp') {
-        if (matches.length === 0) return;
-        e.preventDefault();
-        setHighlighted(Math.max(highlightedIndex - 1, 0));
-        focusQty();
-      } else if (e.key === 'Enter') {
-        if (matches.length === 0) return;
-        e.preventDefault();
-        commitAdd(matches[highlightedIndex >= 0 ? highlightedIndex : 0].typeId);
-      } else if (e.key === 'Escape') {
-        closeResults();
-      }
-    };
-
-    const runSearch = (query) => {
-      const q = query.trim().toLowerCase();
-      if (q.length < 2 || !state.catalogLoaded) {
-        closeResults();
-        return;
-      }
-      matches = state.catalog
-        .filter((item) => {
-          const haystack = `${item.name || ''} ${item.categoryName || ''} ${item.shortcode || ''} ${item.similarGroupName || ''}`.toLowerCase();
-          return haystack.includes(q);
-        })
-        .slice(0, 8);
-
-      if (matches.length === 0) {
-        resultsEl.innerHTML = '<div class="section-add-empty">Ничего не найдено</div>';
-        resultsEl.classList.remove('hidden');
-        highlightedIndex = -1;
-        return;
-      }
-
-      resultsEl.innerHTML = '';
-      matches.forEach((item) => {
-        const row = document.createElement('div');
-        row.className = 'section-add-result-row';
+    createSearchDropdown({
+      inputEl: searchInput,
+      resultsEl,
+      companionEl: qtyInput,
+      minChars: 2,
+      debounceMs: 200,
+      getMatches: (query) => {
+        if (!state.catalogLoaded) return [];
+        const q = query.toLowerCase();
+        return state.catalog
+          .filter((item) => `${item.name || ''} ${item.categoryName || ''} ${item.shortcode || ''} ${item.similarGroupName || ''}`.toLowerCase().includes(q))
+          .slice(0, 8);
+      },
+      renderRow: (item, row) => {
         row.innerHTML = `
           <span class="section-add-result-name">${escapeHtml(item.name || '')}</span>
           <span class="section-add-result-avail pending">…</span>
         `;
-        // mousedown, not click - fires before the search input's blur would
-        // otherwise close the dropdown first.
-        row.addEventListener('mousedown', (e) => {
-          e.preventDefault();
-          commitAdd(item.typeId);
-        });
-        resultsEl.appendChild(row);
-
         const availEl = row.querySelector('.section-add-result-avail');
         getAvailability(item.typeId, loadedJob)
           .then(({ availableQty, stocklevelForWarehouse }) => {
@@ -651,14 +781,13 @@
             availEl.textContent = '?';
             availEl.className = 'section-add-result-avail none';
           });
-      });
-      resultsEl.classList.remove('hidden');
-      highlightedIndex = -1;
-    };
-
-    searchInput.addEventListener('input', debounce(() => runSearch(searchInput.value), 200));
-    searchInput.addEventListener('keydown', handleNavKeydown);
-    qtyInput.addEventListener('keydown', handleNavKeydown);
+      },
+      onSelect: commitAdd,
+      onHighlightChange: () => {
+        qtyInput.focus();
+        qtyInput.select();
+      },
+    });
 
     return wrap;
   }
@@ -728,15 +857,13 @@
     existingLinesTreeEl.appendChild(buildAddSectionControl(loadedJob));
   }
 
-  // Edit/remove target an already-persisted Sort row (Lineref) - different
-  // from the "lines being added" staging list above, which only has local,
-  // unsaved state until submit.
+  // Edit/remove target an already-persisted Sort row (Lineref).
   //
-  // Deliberately does NOT reopen/rebuild the whole tree on success (unlike
-  // removeExistingLine) - the qty input's stepper arrows each fire their own
-  // 'change' event, and a full rebuild per click caused visible flicker and
-  // lost focus. Instead: mutate the line's qty in place and refresh just
-  // this line's own availability badge, so edits feel seamless.
+  // Deliberately does NOT reopen/rebuild the whole tree on success - the
+  // qty input's stepper arrows each fire their own 'change' event, and a
+  // full rebuild per click caused visible flicker and lost focus. Instead:
+  // mutate the line's qty in place and refresh just this line's own
+  // availability badge, so edits feel seamless.
   async function changeExistingLineQuantity(loadedJob, line, newQty) {
     const previousQty = line.qty;
     jobRefStatusEl.textContent = 'Сохраняем количество…';
@@ -758,6 +885,12 @@
     }
   }
 
+  // Removes just this line from the DOM/state on success - no full tree
+  // reload (which used to also wipe and re-fetch the whole availability
+  // cache for every other line on the job, for no reason). Re-renders only
+  // the affected section's own line listing (see rerenderSectionLines), so
+  // a Composite that was absorbing this line as one of its components (or
+  // vice versa) re-evaluates correctly.
   async function removeExistingLine(loadedJob, line) {
     if (!confirm(`Убрать «${line.name || ''}» из работы?`)) return;
     jobRefStatusEl.textContent = 'Удаляем позицию…';
@@ -769,7 +902,11 @@
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'Не удалось удалить позицию');
       jobRefStatusEl.textContent = '';
-      await openExistingJob(loadedJob.jobRef);
+
+      loadedJob.existingLines = loadedJob.existingLines.filter((l) => l !== line);
+      const lineEl = existingLinesTreeEl.querySelector(`.tree-line[data-line-ref-id="${line.lineRefId}"]`);
+      const sectionEl = lineEl ? lineEl.closest('.tree-section') : null;
+      if (sectionEl) rerenderSectionLines(loadedJob, sectionEl);
     } catch (err) {
       jobRefStatusEl.textContent = `Ошибка удаления: ${err.message}`;
     }
@@ -834,11 +971,7 @@
     }
   }
 
-  // focusSectionId: after rebuilding the tree, refocus that section's own
-  // "add equipment" search box - lets addEquipmentToSection reload+refocus
-  // in one call, so entering several items into the same section stays a
-  // tight type -> Enter -> type -> Enter loop instead of losing focus.
-  async function openExistingJob(jobRef, focusSectionId) {
+  async function openExistingJob(jobRef) {
     if (!jobRef) {
       jobRefStatusEl.textContent = 'Введите номер работы или выберите из списка.';
       return;
@@ -868,16 +1001,12 @@
       };
 
       jobRefStatusEl.textContent = '';
+      recentJobsEl.innerHTML = '';
       jobLoadedRefEl.textContent = job.jobRef;
       jobLoadedClientEl.textContent = eqlist.clientName || `#${eqlist.clientId}`;
       jobLoadedDatesEl.textContent = `${READBACK_FORMATTER.format(new Date(eqlist.dateOut.replace(' ', 'T')))} — ${READBACK_FORMATTER.format(new Date(eqlist.dateBack.replace(' ', 'T')))}`;
       renderExistingLinesTree(state.loadedJob);
       jobLoadedInfoEl.classList.remove('hidden');
-      updateSubmitState();
-      if (focusSectionId != null) {
-        const input = existingLinesTreeEl.querySelector(`.section-add[data-section-id="${focusSectionId}"] .section-add-search`);
-        if (input) input.focus();
-      }
     } catch (err) {
       jobRefStatusEl.textContent = `Ошибка: ${err.message}`;
     }
@@ -899,45 +1028,30 @@
       if (state.loadedJob) {
         renderExistingLinesTree(state.loadedJob);
       }
+      // The new-job submit button also depends on the catalog being loaded
+      // (it needs a placeholder typeId) - re-check in case the user already
+      // filled in name/client/dates before this fetch resolved.
+      updateSubmitState();
     } catch (err) {
       loadStatusEl.textContent = `Ошибка загрузки каталога: ${err.message}`;
     }
   }
 
-  // --- Client search ---
-  const searchClients = debounce(async (query) => {
-    if (query.trim().length < 2) {
-      clientResultsEl.classList.add('hidden');
-      clientResultsEl.innerHTML = '';
-      return;
-    }
-    try {
+  // --- Client search (new-job mode) ---
+  createSearchDropdown({
+    inputEl: clientSearchInput,
+    resultsEl: clientResultsEl,
+    getMatches: async (query) => {
       const res = await fetch(`/api/create-job/companies?q=${encodeURIComponent(query)}`);
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'Ошибка поиска клиента');
-      renderClientResults(data.companies || []);
-    } catch (err) {
-      clientResultsEl.innerHTML = `<div class="result-row">Ошибка: ${err.message}</div>`;
-      clientResultsEl.classList.remove('hidden');
-    }
-  }, 300);
-
-  function renderClientResults(companies) {
-    if (companies.length === 0) {
-      clientResultsEl.innerHTML = '<div class="result-row">Ничего не найдено</div>';
-      clientResultsEl.classList.remove('hidden');
-      return;
-    }
-    clientResultsEl.innerHTML = '';
-    for (const company of companies) {
-      const row = document.createElement('div');
-      row.className = 'result-row';
+      return data.companies || [];
+    },
+    renderRow: (company, row) => {
       row.innerHTML = `<div class="name">${escapeHtml(company.companyName)}</div><div class="meta">#${company.companyId}${company.town ? ' · ' + escapeHtml(company.town) : ''}</div>`;
-      row.addEventListener('click', () => selectClient(company));
-      clientResultsEl.appendChild(row);
-    }
-    clientResultsEl.classList.remove('hidden');
-  }
+    },
+    onSelect: (company) => selectClient(company),
+  });
 
   function selectClient(company) {
     state.selectedClient = company;
@@ -945,8 +1059,6 @@
     clientSelectedEl.classList.remove('hidden');
     clientSearchInput.value = '';
     clientSearchInput.classList.add('hidden');
-    clientResultsEl.classList.add('hidden');
-    clientResultsEl.innerHTML = '';
     updateSubmitState();
   }
 
@@ -958,195 +1070,14 @@
     updateSubmitState();
   });
 
-  clientSearchInput.addEventListener('input', () => searchClients(clientSearchInput.value));
-  document.addEventListener('click', (e) => {
-    if (!e.target.closest('.client-picker')) {
-      clientResultsEl.classList.add('hidden');
-    }
-  });
-
-  // --- Equipment search (client-side over cached catalog) ---
-  function searchEquipment(query) {
-    const q = query.trim().toLowerCase();
-    if (q.length < 2 || !state.catalogLoaded) {
-      equipmentResultsEl.classList.add('hidden');
-      equipmentResultsEl.innerHTML = '';
-      return;
-    }
-    const matches = state.catalog
-      .filter((item) => {
-        const haystack = `${item.name || ''} ${item.categoryName || ''} ${item.shortcode || ''} ${item.similarGroupName || ''}`.toLowerCase();
-        return haystack.includes(q);
-      })
-      .slice(0, 20);
-    renderEquipmentResults(matches);
-  }
-
-  function renderEquipmentResults(items) {
-    if (items.length === 0) {
-      equipmentResultsEl.innerHTML = '<div class="result-row">Ничего не найдено</div>';
-      equipmentResultsEl.classList.remove('hidden');
-      return;
-    }
-    equipmentResultsEl.innerHTML = '';
-    for (const item of items) {
-      const row = document.createElement('div');
-      row.className = 'result-row';
-      row.innerHTML = `<div class="name">${escapeHtml(item.name || '')}</div><div class="meta">#${item.typeId} · ${escapeHtml(item.categoryName || '')}</div>`;
-      row.addEventListener('click', () => addLine(item));
-      equipmentResultsEl.appendChild(row);
-    }
-    equipmentResultsEl.classList.remove('hidden');
-  }
-
-  equipmentSearchInput.addEventListener('input', () => searchEquipment(equipmentSearchInput.value));
-  document.addEventListener('click', (e) => {
-    if (!e.target.closest('.equipment-picker')) {
-      equipmentResultsEl.classList.add('hidden');
-    }
-  });
-
-  // Registered once (not per-widget-instance, since the tree - and every
-  // section-add widget in it - gets rebuilt on every reload) - closes
-  // whichever per-section dropdown is open when clicking outside it.
-  document.addEventListener('click', (e) => {
-    if (e.target.closest('.section-add')) return;
-    document.querySelectorAll('.section-add-results').forEach((el) => el.classList.add('hidden'));
-  });
-
-  // --- Lines ---
-  function addLine(item) {
-    const existing = state.lines.find((line) => line.typeId === item.typeId);
-    if (existing) {
-      existing.qty += 1;
-    } else {
-      state.lines.push({
-        typeId: item.typeId,
-        name: item.name,
-        categoryName: item.categoryName,
-        qty: 1,
-        availability: null,
-      });
-    }
-    equipmentSearchInput.value = '';
-    equipmentResultsEl.classList.add('hidden');
-    renderLines();
-    const line = state.lines.find((l) => l.typeId === item.typeId);
-    refreshAvailability(line);
-  }
-
-  function removeLine(typeId) {
-    state.lines = state.lines.filter((line) => line.typeId !== typeId);
-    renderLines();
-    updateSubmitState();
-  }
-
-  function renderLines() {
-    linesBodyEl.innerHTML = '';
-    linesEmptyEl.classList.toggle('hidden', state.lines.length > 0);
-    for (const line of state.lines) {
-      const tr = document.createElement('tr');
-
-      const nameTd = document.createElement('td');
-      nameTd.innerHTML = `<strong>${escapeHtml(line.name || '')}</strong><br><span class="meta">#${line.typeId} · ${escapeHtml(line.categoryName || '')}</span>`;
-
-      const qtyTd = document.createElement('td');
-      const qtyInput = document.createElement('input');
-      qtyInput.type = 'number';
-      qtyInput.min = '1';
-      qtyInput.step = '1';
-      qtyInput.value = String(line.qty);
-      qtyInput.addEventListener('change', () => {
-        const value = Math.max(1, Math.round(Number(qtyInput.value) || 1));
-        line.qty = value;
-        qtyInput.value = String(value);
-        refreshAvailability(line);
-        updateSubmitState();
-      });
-      qtyTd.appendChild(qtyInput);
-
-      const availTd = document.createElement('td');
-      availTd.appendChild(renderAvailabilityBadge(line));
-
-      const actionTd = document.createElement('td');
-      const removeBtn = document.createElement('button');
-      removeBtn.className = 'remove-line';
-      removeBtn.textContent = 'Убрать';
-      removeBtn.addEventListener('click', () => removeLine(line.typeId));
-      actionTd.appendChild(removeBtn);
-
-      tr.append(nameTd, qtyTd, availTd, actionTd);
-      linesBodyEl.appendChild(tr);
-    }
-    updateSubmitState();
-  }
-
-  function renderAvailabilityBadge(line) {
-    const span = document.createElement('span');
-    const availability = line.availability;
-    if (!availability) {
-      span.className = 'availability-badge pending';
-      span.textContent = getDateRange().dateFrom && getDateRange().dateTo ? '…' : 'укажите даты';
-      return span;
-    }
-    if (availability.status === 'error') {
-      span.className = 'availability-badge none';
-      span.textContent = 'ошибка проверки';
-      return span;
-    }
-    const { availableQty, stocklevelForWarehouse } = availability;
-    span.textContent = `${availableQty} свободно из ${stocklevelForWarehouse}`;
-    if (availableQty <= 0) {
-      span.className = 'availability-badge none';
-    } else if (availableQty < line.qty) {
-      span.className = 'availability-badge low';
-    } else {
-      span.className = 'availability-badge ok';
-    }
-    return span;
-  }
-
-  async function refreshAvailability(line) {
-    const { dateFrom, dateTo } = getDateRange();
-    if (!dateFrom || !dateTo) {
-      line.availability = null;
-      renderLines();
-      return;
-    }
-    try {
-      const params = new URLSearchParams({
-        typeId: String(line.typeId),
-        quantity: String(line.qty),
-        dateFrom,
-        dateTo,
-      });
-      const res = await fetch(`/api/create-job/availability?${params.toString()}`);
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || 'Ошибка проверки доступности');
-      line.availability = {
-        availableQty: data.availableQty ?? 0,
-        stocklevelForWarehouse: data.stocklevelForWarehouse ?? 0,
-        status: 'ok',
-      };
-    } catch (err) {
-      line.availability = { status: 'error' };
-    }
-    renderLines();
-  }
-
-  function refreshAllAvailability() {
-    for (const line of state.lines) {
-      refreshAvailability(line);
-    }
-  }
-
-  dateFromInput.addEventListener('change', refreshAllAvailability);
-  dateToInput.addEventListener('change', refreshAllAvailability);
-
-  // --- Submit (new-job creation only - existing-job mode adds equipment
-  // directly per-section, see buildSectionAddWidget/addEquipmentToSection,
-  // and never shows this card at all) ---
+  // --- Submit: new-job mode only creates the job's header (name/dates/
+  // client) - no equipment lines here at all. On success, transitions
+  // straight into the same tree-based editor existing jobs use (see
+  // openExistingJob), instead of a separate staging-table flow - "two
+  // different entities" for the same underlying task was the thing being
+  // fixed here.
   function updateSubmitState() {
+    if (state.mode !== 'new') return;
     const rangeValid = updateDateReadbacks();
     const { dateFrom, dateTo } = getDateRange();
     const ready =
@@ -1155,7 +1086,8 @@
       dateFrom &&
       dateTo &&
       rangeValid &&
-      state.lines.length > 0;
+      state.catalogLoaded &&
+      state.catalog.length > 0;
     submitBtn.disabled = !ready;
   }
 
@@ -1166,12 +1098,16 @@
   dateToInput.addEventListener('change', updateSubmitState);
 
   submitBtn.addEventListener('click', async () => {
+    const { dateFrom, dateTo } = getDateRange();
     const payload = {
       jobName: jobNameInput.value.trim(),
       clientId: state.selectedClient.companyId,
-      dateFrom: getDateRange().dateFrom,
-      dateTo: getDateRange().dateTo,
-      lines: state.lines.map((line) => ({ typeId: line.typeId, quantity: line.qty })),
+      dateFrom,
+      dateTo,
+      // initialise_new_booking requires *some* real typeId/quantity even
+      // though it's discarded (see createHiretrackJobShell) - any already-
+      // loaded catalog item works.
+      placeholderTypeId: state.catalog[0].typeId,
     };
 
     submitBtn.disabled = true;
@@ -1179,36 +1115,28 @@
     resultEl.classList.add('hidden');
 
     try {
-      const res = await fetch('/api/create-job/bookings', {
+      const res = await fetch('/api/create-job/jobs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
       const data = await res.json();
-      if (!data.ok) throw new Error(data.error || 'Не удалось выполнить запрос');
+      if (!data.ok) throw new Error(data.error || 'Не удалось создать работу');
+      if (!data.jobRef) throw new Error('HireTrack не вернул номер новой работы.');
 
-      const allFailed = data.linesWritten === 0;
-      const someFailed = data.failedLines && data.failedLines.length > 0;
-      let html = `Работа создана: <strong>${escapeHtml(data.jobRef || String(data.jobId))}</strong>, Eqlist <strong>${escapeHtml(data.eqRef || String(data.eqlistId))}</strong>. Записано позиций: <strong>${data.linesWritten} из ${state.lines.length}</strong>.`;
-      if (someFailed) {
-        html += '<br>Не удалось записать: ' + data.failedLines.map((f) => `#${f.typeId} — ${escapeHtml(f.error)}`).join('; ');
-      }
-      resultEl.className = allFailed ? 'result error' : someFailed ? 'result warning' : 'result success';
-      resultEl.innerHTML = html;
-      resultEl.classList.remove('hidden');
+      resetNewJobForm();
+      setMode('existing');
+      jobRefSearchInput.value = data.jobRef;
+      await openExistingJob(data.jobRef);
     } catch (err) {
       resultEl.className = 'result error';
       resultEl.textContent = `Ошибка: ${err.message}`;
       resultEl.classList.remove('hidden');
     } finally {
-      submitBtn.textContent = 'Создать работу в HireTrack';
+      submitBtn.textContent = 'Создать работу';
       updateSubmitState();
     }
   });
-
-  function escapeHtml(value) {
-    return String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
-  }
 
   updateDateReadbacks();
   loadCatalog();
