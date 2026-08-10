@@ -971,7 +971,45 @@
     }
   }
 
-  async function openExistingJob(jobRef) {
+  // Pushes a history entry for the loaded job (?job=REF), so the browser's
+  // own Back button returns to the job list/search state instead of
+  // leaving the page entirely (there was previously no history entry for
+  // "job loaded" at all - opening a job never navigated anywhere, so Back
+  // fell straight through to whatever page linked into /create-job/, e.g.
+  // the portal). Skipped when re-entering a job via popstate itself
+  // (pushHistory: false), and when the URL already points at this job (no
+  // point creating a redundant entry, e.g. clicking the same search result
+  // twice).
+  function pushJobHistory(jobRef) {
+    const current = new URLSearchParams(window.location.search).get('job');
+    if (current === jobRef) return;
+    const url = new URL(window.location.href);
+    url.searchParams.set('job', jobRef);
+    history.pushState({ jobRef }, '', url);
+  }
+
+  // Back to the job list/search state - state only, no history.pushState
+  // (this runs *in response to* a popstate, or wouldn't be needed at all).
+  function closeLoadedJob() {
+    state.loadedJob = null;
+    jobLoadedInfoEl.classList.add('hidden');
+    jobRefStatusEl.textContent = '';
+    jobRefSearchInput.value = '';
+    loadRecentJobs();
+  }
+
+  window.addEventListener('popstate', () => {
+    const jobRef = new URLSearchParams(window.location.search).get('job');
+    if (jobRef) {
+      setMode('existing');
+      jobRefSearchInput.value = jobRef;
+      openExistingJob(jobRef, { pushHistory: false });
+    } else if (state.loadedJob) {
+      closeLoadedJob();
+    }
+  });
+
+  async function openExistingJob(jobRef, { pushHistory = true } = {}) {
     if (!jobRef) {
       jobRefStatusEl.textContent = 'Введите номер работы или выберите из списка.';
       return;
@@ -1007,6 +1045,7 @@
       jobLoadedDatesEl.textContent = `${READBACK_FORMATTER.format(new Date(eqlist.dateOut.replace(' ', 'T')))} — ${READBACK_FORMATTER.format(new Date(eqlist.dateBack.replace(' ', 'T')))}`;
       renderExistingLinesTree(state.loadedJob);
       jobLoadedInfoEl.classList.remove('hidden');
+      if (pushHistory) pushJobHistory(job.jobRef);
     } catch (err) {
       jobRefStatusEl.textContent = `Ошибка: ${err.message}`;
     }
@@ -1140,4 +1179,14 @@
 
   updateDateReadbacks();
   loadCatalog();
+
+  // Deep link / page refresh while a job was loaded (?job=REF) - open it
+  // directly instead of dropping back to the blank new-job form. Doesn't
+  // push a history entry since we're already at this URL.
+  const initialJobRef = new URLSearchParams(window.location.search).get('job');
+  if (initialJobRef) {
+    setMode('existing');
+    jobRefSearchInput.value = initialJobRef;
+    openExistingJob(initialJobRef, { pushHistory: false });
+  }
 })();
