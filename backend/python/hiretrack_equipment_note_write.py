@@ -132,6 +132,60 @@ def update_eqlist_dates(cursor, params):
     return {"eqlistId": eqlist_id, "dateFrom": date_from, "dateTo": date_to}
 
 
+def rename_section(cursor, params):
+    section_id = params.get("sectionId")
+    section_text = params.get("sectionText")
+    if section_id is None or not section_text:
+        raise ValueError("rename-section requires 'sectionId' and 'sectionText'")
+
+    cursor.execute('UPDATE "EqSections" SET "SectionText" = ? WHERE "idx" = ?', section_text, section_id)
+    return {"sectionId": section_id, "sectionText": section_text}
+
+
+def create_section(cursor, params):
+    eqlist_id = params.get("eqlistId")
+    section_text = params.get("sectionText")
+    if eqlist_id is None or not section_text:
+        raise ValueError("create-section requires 'eqlistId' and 'sectionText'")
+
+    # sortOrder is a plain FLOAT (confirmed live via cur.columns), not an
+    # index HireTrack manages itself - append the new section after every
+    # existing one for this Eqlist.
+    cursor.execute('SELECT MAX("sortOrder") FROM "EqSections" WHERE "xEqlno" = ?', eqlist_id)
+    row = cursor.fetchone()
+    next_sort_order = (float(row[0]) if row and row[0] is not None else 0.0) + 1.0
+
+    cursor.execute(
+        'INSERT INTO "EqSections" ("xEqlno", "SectionText", "sortOrder") VALUES (?, ?, ?)',
+        eqlist_id, section_text, next_sort_order,
+    )
+    # Same LASTAUTOINC pattern as CreateNewNote above - confirmed live for
+    # EqSections.idx too (2026-08-10).
+    cursor.execute('SELECT LASTAUTOINC FROM "#dummy"')
+    row = cursor.fetchone()
+    if not row or row[0] is None:
+        raise ValueError("EqSections insert did not return a new section id")
+    section_id = int(row[0])
+
+    return {"sectionId": section_id, "eqlistId": eqlist_id, "sectionText": section_text, "sortOrder": next_sort_order}
+
+
+def delete_section(cursor, params):
+    section_id = params.get("sectionId")
+    eqlist_id = params.get("eqlistId")
+    if section_id is None or eqlist_id is None:
+        raise ValueError("delete-section requires 'sectionId' and 'eqlistId'")
+
+    # Move any lines still in this section back to "no section" rather than
+    # leaving them pointing at a now-deleted EqSections row - confirmed live
+    # that Sort.sectionID accepts NULL.
+    cursor.execute('UPDATE "Sort" SET "sectionID" = NULL WHERE "sectionID" = ? AND "Eqlno" = ?', section_id, eqlist_id)
+    lines_reassigned = cursor.rowcount
+
+    cursor.execute('DELETE FROM "EqSections" WHERE "idx" = ?', section_id)
+    return {"sectionId": section_id, "linesReassigned": lines_reassigned}
+
+
 def main():
     if not DSN:
         raise ValueError("HIRETRACK_WRITE_ODBC_DSN is not configured")
@@ -152,6 +206,12 @@ def main():
             result = add_note_line(cursor, request)
         elif operation == "update-eqlist-dates":
             result = update_eqlist_dates(cursor, request)
+        elif operation == "rename-section":
+            result = rename_section(cursor, request)
+        elif operation == "create-section":
+            result = create_section(cursor, request)
+        elif operation == "delete-section":
+            result = delete_section(cursor, request)
         else:
             raise ValueError(f"Unsupported HireTrack write operation: {operation}")
         json.dump({"ok": True, "result": result}, sys.stdout, ensure_ascii=False)

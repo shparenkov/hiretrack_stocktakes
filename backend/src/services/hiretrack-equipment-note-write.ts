@@ -72,3 +72,39 @@ export async function createEquipmentNoteWithLines(
 
   return { noteId, linesWritten, failedLines };
 }
+
+// EqSections CRUD for the create-job existing-job tree view. Confirmed live
+// (2026-08-10) against a throwaway section on the Р7167МСК test job: idx is
+// LASTAUTOINC same as CreateNewNote, sortOrder is a plain FLOAT (append new
+// sections after the highest existing one), and Sort.sectionID accepts NULL
+// so deleting a section can move its lines back to "no section" instead of
+// leaving them pointing at a row that no longer exists.
+
+export interface RenameSectionResult {
+  sectionId: number;
+  sectionText: string;
+}
+
+export async function renameHiretrackSection(sectionId: number, sectionText: string): Promise<RenameSectionResult> {
+  return runHiretrackOdbcWrite<RenameSectionResult>({ operation: 'rename-section', sectionId, sectionText });
+}
+
+export interface CreateSectionResult {
+  sectionId: number;
+  eqlistId: number;
+  sectionText: string;
+  sortOrder: number;
+}
+
+export async function createHiretrackSection(eqlistId: number, sectionText: string): Promise<CreateSectionResult> {
+  return runHiretrackOdbcWrite<CreateSectionResult>({ operation: 'create-section', eqlistId, sectionText });
+}
+
+export interface DeleteSectionResult {
+  sectionId: number;
+  linesReassigned: number;
+}
+
+export async function deleteHiretrackSection(sectionId: number, eqlistId: number): Promise<DeleteSectionResult> {
+  return runHiretrackOdbcWrite<DeleteSectionResult>({ operation: 'delete-section', sectionId, eqlistId });
+}

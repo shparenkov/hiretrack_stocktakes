@@ -6,6 +6,7 @@
   --muted: #687485;
   --green: #2d6b45;
   --red: #932b20;
+  --yellow: #b8860b;
 }
 
 * { box-sizing: border-box; }
@@ -251,6 +252,9 @@ main {
 .tree-section + .tree-section { border-top: 1px solid var(--line); }
 
 .tree-section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 7px 10px;
   background: var(--canvas);
   color: var(--navy);
@@ -258,6 +262,69 @@ main {
   text-transform: uppercase;
   letter-spacing: .04em;
 }
+
+.tree-section-title { flex: 1; }
+
+.tree-section-title-input {
+  flex: 1;
+  padding: 3px 6px;
+  border: 1px solid var(--blue);
+  font: 700 11px Arial, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--navy);
+}
+
+.tree-section-rename,
+.tree-section-delete {
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 2px 4px;
+  line-height: 1;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.tree-section-rename { color: var(--muted); font-size: 12px; }
+.tree-section-rename:hover { opacity: .7; }
+.tree-section-delete { color: var(--red); font: 700 15px Arial, sans-serif; }
+.tree-section-delete:hover { opacity: .7; }
+
+.tree-section-empty {
+  padding: 8px 10px 8px 22px;
+  color: var(--muted);
+  font-size: 12px;
+  font-style: italic;
+  border-top: 1px solid #eef2f5;
+}
+
+.tree-add-section {
+  display: flex;
+  gap: 8px;
+  padding: 10px;
+  border-top: 1px solid var(--line);
+  background: var(--canvas);
+}
+
+.tree-add-section-input {
+  flex: 1;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  font: 13px Arial, sans-serif;
+}
+
+.tree-add-section-btn {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--navy);
+  cursor: pointer;
+  padding: 6px 12px;
+  font: 700 12px Arial, sans-serif;
+  white-space: nowrap;
+}
+.tree-add-section-btn:hover { background: var(--canvas); }
+.tree-add-section-btn:disabled { opacity: .6; cursor: default; }
 
 .tree-line {
   display: flex;
@@ -297,7 +364,7 @@ main {
 }
 
 .tree-line-availability.ok { color: var(--green); }
-.tree-line-availability.low { color: #a15b12; }
+.tree-line-availability.zero { color: var(--yellow); }
 .tree-line-availability.none { color: var(--red); }
 .tree-line-availability.pending { color: var(--muted); font-weight: 400; }
 

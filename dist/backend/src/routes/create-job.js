@@ -7,6 +7,7 @@ const hiretrack_equipment_catalog_1 = require("../services/hiretrack-equipment-c
 const hiretrack_company_search_1 = require("../services/hiretrack-company-search");
 const hiretrack_job_lookup_1 = require("../services/hiretrack-job-lookup");
 const hiretrack_booking_api_1 = require("../services/hiretrack-booking-api");
+const hiretrack_equipment_note_write_1 = require("../services/hiretrack-equipment-note-write");
 exports.createJobRouter = (0, express_1.Router)();
 exports.createJobRouter.get('/catalog', async (_req, res) => {
     try {
@@ -149,6 +150,60 @@ exports.createJobRouter.delete('/jobs/:jobRef/lines/:lineRefId', async (req, res
     }
     try {
         const result = await (0, hiretrack_booking_api_1.removeFromHiretrackBooking)({ ...parsed.data, lineRefId });
+        res.json({ ok: true, ...result });
+    }
+    catch (error) {
+        res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+});
+const createSectionSchema = zod_1.z.object({
+    eqlistId: zod_1.z.coerce.number().int().positive(),
+    sectionText: zod_1.z.string().trim().min(1).max(255),
+});
+exports.createJobRouter.post('/jobs/:jobRef/sections', async (req, res) => {
+    const parsed = createSectionSchema.safeParse(req.body);
+    if (!parsed.success) {
+        res.status(400).json({ ok: false, error: 'Validation failed', issues: parsed.error.flatten() });
+        return;
+    }
+    try {
+        const result = await (0, hiretrack_equipment_note_write_1.createHiretrackSection)(parsed.data.eqlistId, parsed.data.sectionText);
+        res.json({ ok: true, ...result });
+    }
+    catch (error) {
+        res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+});
+const renameSectionSchema = zod_1.z.object({
+    sectionText: zod_1.z.string().trim().min(1).max(255),
+});
+exports.createJobRouter.put('/jobs/:jobRef/sections/:sectionId', async (req, res) => {
+    const parsed = renameSectionSchema.safeParse(req.body);
+    const sectionId = Number(req.params.sectionId);
+    if (!parsed.success || !Number.isInteger(sectionId) || sectionId <= 0) {
+        res.status(400).json({ ok: false, error: 'Validation failed', issues: parsed.success ? undefined : parsed.error.flatten() });
+        return;
+    }
+    try {
+        const result = await (0, hiretrack_equipment_note_write_1.renameHiretrackSection)(sectionId, parsed.data.sectionText);
+        res.json({ ok: true, ...result });
+    }
+    catch (error) {
+        res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+});
+const deleteSectionSchema = zod_1.z.object({
+    eqlistId: zod_1.z.coerce.number().int().positive(),
+});
+exports.createJobRouter.delete('/jobs/:jobRef/sections/:sectionId', async (req, res) => {
+    const parsed = deleteSectionSchema.safeParse(req.query);
+    const sectionId = Number(req.params.sectionId);
+    if (!parsed.success || !Number.isInteger(sectionId) || sectionId <= 0) {
+        res.status(400).json({ ok: false, error: 'Validation failed', issues: parsed.success ? undefined : parsed.error.flatten() });
+        return;
+    }
+    try {
+        const result = await (0, hiretrack_equipment_note_write_1.deleteHiretrackSection)(sectionId, parsed.data.eqlistId);
         res.json({ ok: true, ...result });
     }
     catch (error) {

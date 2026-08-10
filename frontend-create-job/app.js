@@ -201,19 +201,247 @@
     return `<span class="type-badge ${info.cls}">${info.letter}</span>`;
   }
 
+  // Renders one section's lines (Composite/Alias nested under their own
+  // line) into sectionEl. Shared by every section, including the
+  // "Без секции" bucket and empty newly-created sections.
+  function renderLinesIntoSection(sectionEl, sectionLines, loadedJob) {
+    // A Composite/Alias line's declared components (from the catalog's
+    // COMPOSIT data) often ALSO exist as their own separate Sort rows in
+    // the same section, for stock tracking - without this, they'd render
+    // twice: once as a standalone line, once nested under the Composite.
+    // Absorb them into the Composite's nested view instead and skip the
+    // standalone line, using the real persisted quantity when available
+    // (more authoritative than the catalog recipe's default quantity).
+    const linesByType = new Map(sectionLines.map((l) => [l.typeId, l]));
+    const absorbedTypeIds = new Set();
+    for (const line of sectionLines) {
+      const catalogItem = state.catalogById.get(line.typeId);
+      const equipmentType = line.equipmentType ?? catalogItem?.equipmentType ?? 0;
+      if (equipmentType > 0) {
+        for (const component of catalogItem?.components || []) {
+          if (linesByType.has(component.componentTypeId)) {
+            absorbedTypeIds.add(component.componentTypeId);
+          }
+        }
+      }
+    }
+
+    for (const line of sectionLines) {
+      if (absorbedTypeIds.has(line.typeId)) continue;
+
+      const catalogItem = state.catalogById.get(line.typeId);
+      const equipmentType = line.equipmentType ?? catalogItem?.equipmentType ?? 0;
+      const components = catalogItem?.components || [];
+
+      const hasComponents = equipmentType > 0 && components.length > 0;
+
+      const lineEl = document.createElement('div');
+      lineEl.className = 'tree-line';
+      lineEl.dataset.lineRefId = String(line.lineRefId);
+      lineEl.innerHTML = `
+        ${typeBadgeHtml(equipmentType, line.equipmentClass)}
+        <input type="number" class="tree-line-qty-input" min="1" step="1" value="${line.qty}">
+        ${hasComponents ? '<button type="button" class="tree-line-toggle" aria-expanded="false">▸</button>' : '<span class="tree-line-toggle-spacer"></span>'}
+        <span class="tree-line-name">${escapeHtml(line.name || '')}</span>
+        <span class="tree-line-availability pending">…</span>
+        <button type="button" class="tree-line-remove" title="Удалить" aria-label="Удалить">×</button>
+      `;
+      const qtyInput = lineEl.querySelector('.tree-line-qty-input');
+      // Debounced so clicking the native number-input stepper arrows
+      // (each click commits its own 'change' event immediately) coalesces
+      // into one save instead of firing a request - and a full tree
+      // rebuild - per click.
+      const commitQtyChange = debounce(() => {
+        const newQty = Math.max(1, Math.round(Number(qtyInput.value) || 1));
+        qtyInput.value = String(newQty);
+        if (newQty !== line.qty) changeExistingLineQuantity(loadedJob, line, newQty);
+      }, 450);
+      qtyInput.addEventListener('change', commitQtyChange);
+      lineEl.querySelector('.tree-line-remove').addEventListener('click', () => removeExistingLine(loadedJob, line));
+      sectionEl.appendChild(lineEl);
+      refreshExistingLineAvailability(loadedJob, line);
+
+      if (hasComponents) {
+        const componentsEl = document.createElement('div');
+        componentsEl.className = 'tree-components collapsed';
+        for (const component of components) {
+          const matchedLine = linesByType.get(component.componentTypeId);
+          const qty = matchedLine ? matchedLine.qty : component.quantity;
+          const compLineEl = document.createElement('div');
+          compLineEl.className = 'tree-component-line';
+          compLineEl.innerHTML = `<span class="tree-component-qty">${qty} ×</span><span>${escapeHtml(component.componentName || '')}</span>`;
+          componentsEl.appendChild(compLineEl);
+        }
+        sectionEl.appendChild(componentsEl);
+
+        // Composite/Alias contents are collapsed by default (spoiler) -
+        // toggle button lives on the parent line, componentsEl is its own
+        // sibling node right after it in the DOM.
+        const toggleBtn = lineEl.querySelector('.tree-line-toggle');
+        toggleBtn.addEventListener('click', () => {
+          const isCollapsed = componentsEl.classList.toggle('collapsed');
+          toggleBtn.textContent = isCollapsed ? '▸' : '▾';
+          toggleBtn.setAttribute('aria-expanded', String(!isCollapsed));
+        });
+      }
+    }
+  }
+
+  // Section header with inline rename (pencil -> text input, commits on
+  // blur/Enter, Escape cancels) and delete (confirm() before calling the
+  // API - a real EqSections row, not just a UI grouping). Rename mutates
+  // section.sectionText in place instead of a full reload, matching the
+  // same "seamless edit" pattern as changeExistingLineQuantity.
+  function buildSectionHeader(loadedJob, section) {
+    const header = document.createElement('div');
+    header.className = 'tree-section-header';
+
+    const titleEl = document.createElement('span');
+    titleEl.className = 'tree-section-title';
+    titleEl.textContent = section.sectionText || `Секция #${section.sectionId}`;
+
+    const renameBtn = document.createElement('button');
+    renameBtn.type = 'button';
+    renameBtn.className = 'tree-section-rename';
+    renameBtn.title = 'Переименовать секцию';
+    renameBtn.setAttribute('aria-label', 'Переименовать секцию');
+    renameBtn.textContent = '✎';
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.className = 'tree-section-delete';
+    deleteBtn.title = 'Удалить секцию';
+    deleteBtn.setAttribute('aria-label', 'Удалить секцию');
+    deleteBtn.textContent = '×';
+
+    header.append(titleEl, renameBtn, deleteBtn);
+
+    renameBtn.addEventListener('click', () => {
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'tree-section-title-input';
+      input.maxLength = 255;
+      input.value = section.sectionText || '';
+      header.replaceChild(input, titleEl);
+      renameBtn.classList.add('hidden');
+      deleteBtn.classList.add('hidden');
+      input.focus();
+      input.select();
+
+      let settled = false;
+      const restore = () => {
+        header.replaceChild(titleEl, input);
+        renameBtn.classList.remove('hidden');
+        deleteBtn.classList.remove('hidden');
+      };
+      const commit = async () => {
+        if (settled) return;
+        settled = true;
+        const newText = input.value.trim();
+        if (!newText || newText === section.sectionText) {
+          restore();
+          return;
+        }
+        jobRefStatusEl.textContent = 'Переименовываем секцию…';
+        try {
+          const res = await fetch(`/api/create-job/jobs/${encodeURIComponent(loadedJob.jobRef)}/sections/${section.sectionId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sectionText: newText }),
+          });
+          const data = await res.json();
+          if (!data.ok) throw new Error(data.error || 'Не удалось переименовать секцию');
+          section.sectionText = newText;
+          titleEl.textContent = newText;
+          jobRefStatusEl.textContent = '';
+        } catch (err) {
+          jobRefStatusEl.textContent = `Ошибка переименования секции: ${err.message}`;
+        }
+        restore();
+      };
+      input.addEventListener('blur', commit);
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') input.blur();
+        if (e.key === 'Escape') {
+          settled = true;
+          restore();
+        }
+      });
+    });
+
+    deleteBtn.addEventListener('click', async () => {
+      const title = section.sectionText || `Секция #${section.sectionId}`;
+      if (!confirm(`Удалить секцию «${title}»? Оборудование из неё останется на работе без секции.`)) return;
+      jobRefStatusEl.textContent = 'Удаляем секцию…';
+      try {
+        const params = new URLSearchParams({ eqlistId: String(loadedJob.eqlistId) });
+        const res = await fetch(`/api/create-job/jobs/${encodeURIComponent(loadedJob.jobRef)}/sections/${section.sectionId}?${params.toString()}`, {
+          method: 'DELETE',
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || 'Не удалось удалить секцию');
+        jobRefStatusEl.textContent = '';
+        await openExistingJob(loadedJob.jobRef);
+      } catch (err) {
+        jobRefStatusEl.textContent = `Ошибка удаления секции: ${err.message}`;
+      }
+    });
+
+    return header;
+  }
+
+  // "+ Добавить секцию" control, always shown at the bottom of the tree.
+  function buildAddSectionControl(loadedJob) {
+    const wrap = document.createElement('div');
+    wrap.className = 'tree-add-section';
+    wrap.innerHTML = `
+      <input type="text" class="tree-add-section-input" placeholder="Название новой секции…" maxlength="255">
+      <button type="button" class="tree-add-section-btn">+ Добавить секцию</button>
+    `;
+    const input = wrap.querySelector('.tree-add-section-input');
+    const btn = wrap.querySelector('.tree-add-section-btn');
+
+    const submit = async () => {
+      const sectionText = input.value.trim();
+      if (!sectionText) {
+        input.focus();
+        return;
+      }
+      btn.disabled = true;
+      jobRefStatusEl.textContent = 'Добавляем секцию…';
+      try {
+        const res = await fetch(`/api/create-job/jobs/${encodeURIComponent(loadedJob.jobRef)}/sections`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ eqlistId: loadedJob.eqlistId, sectionText }),
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || 'Не удалось добавить секцию');
+        jobRefStatusEl.textContent = '';
+        await openExistingJob(loadedJob.jobRef);
+      } catch (err) {
+        jobRefStatusEl.textContent = `Ошибка добавления секции: ${err.message}`;
+        btn.disabled = false;
+      }
+    };
+    btn.addEventListener('click', submit);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') submit();
+    });
+
+    return wrap;
+  }
+
   // Nested view: Sections -> lines -> (for Composite/Alias lines) their
   // components. Components come straight from the already-loaded catalog
   // cache (state.catalogById), not a separate fetch - equipment-catalog-full
-  // already joins COMPOSIT for every item.
+  // already joins COMPOSIT for every item. Every known section renders (even
+  // ones with zero lines, e.g. right after creation) so it can be renamed/
+  // deleted/populated - sections used to be skipped entirely when empty.
   function renderExistingLinesTree(loadedJob) {
     const sections = loadedJob.existingSections;
     const lines = loadedJob.existingLines;
     existingLinesTreeEl.innerHTML = '';
-
-    if (lines.length === 0) {
-      existingLinesTreeEl.innerHTML = '<div class="tree-empty">На этой работе пока нет оборудования.</div>';
-      return;
-    }
 
     const linesBySection = new Map();
     for (const line of lines) {
@@ -224,121 +452,47 @@
     }
 
     const orderedSections = [...sections].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
-    const seenKeys = new Set();
-
-    const renderSection = (sectionEl, key, title) => {
-      const sectionLines = linesBySection.get(key) || [];
-      if (sectionLines.length === 0) return;
-      seenKeys.add(key);
-
-      const header = document.createElement('div');
-      header.className = 'tree-section-header';
-      header.textContent = title;
-      sectionEl.appendChild(header);
-
-      // A Composite/Alias line's declared components (from the catalog's
-      // COMPOSIT data) often ALSO exist as their own separate Sort rows in
-      // the same section, for stock tracking - without this, they'd render
-      // twice: once as a standalone line, once nested under the Composite.
-      // Absorb them into the Composite's nested view instead and skip the
-      // standalone line, using the real persisted quantity when available
-      // (more authoritative than the catalog recipe's default quantity).
-      const linesByType = new Map(sectionLines.map((l) => [l.typeId, l]));
-      const absorbedTypeIds = new Set();
-      for (const line of sectionLines) {
-        const catalogItem = state.catalogById.get(line.typeId);
-        const equipmentType = line.equipmentType ?? catalogItem?.equipmentType ?? 0;
-        if (equipmentType > 0) {
-          for (const component of catalogItem?.components || []) {
-            if (linesByType.has(component.componentTypeId)) {
-              absorbedTypeIds.add(component.componentTypeId);
-            }
-          }
-        }
-      }
-
-      for (const line of sectionLines) {
-        if (absorbedTypeIds.has(line.typeId)) continue;
-
-        const catalogItem = state.catalogById.get(line.typeId);
-        const equipmentType = line.equipmentType ?? catalogItem?.equipmentType ?? 0;
-        const components = catalogItem?.components || [];
-
-        const hasComponents = equipmentType > 0 && components.length > 0;
-
-        const lineEl = document.createElement('div');
-        lineEl.className = 'tree-line';
-        lineEl.dataset.lineRefId = String(line.lineRefId);
-        lineEl.innerHTML = `
-          ${typeBadgeHtml(equipmentType, line.equipmentClass)}
-          <input type="number" class="tree-line-qty-input" min="1" step="1" value="${line.qty}">
-          ${hasComponents ? '<button type="button" class="tree-line-toggle" aria-expanded="false">▸</button>' : '<span class="tree-line-toggle-spacer"></span>'}
-          <span class="tree-line-name">${escapeHtml(line.name || '')}</span>
-          <span class="tree-line-availability pending">…</span>
-          <button type="button" class="tree-line-remove" title="Удалить" aria-label="Удалить">×</button>
-        `;
-        const qtyInput = lineEl.querySelector('.tree-line-qty-input');
-        // Debounced so clicking the native number-input stepper arrows
-        // (each click commits its own 'change' event immediately) coalesces
-        // into one save instead of firing a request - and a full tree
-        // rebuild - per click.
-        const commitQtyChange = debounce(() => {
-          const newQty = Math.max(1, Math.round(Number(qtyInput.value) || 1));
-          qtyInput.value = String(newQty);
-          if (newQty !== line.qty) changeExistingLineQuantity(loadedJob, line, newQty);
-        }, 450);
-        qtyInput.addEventListener('change', commitQtyChange);
-        lineEl.querySelector('.tree-line-remove').addEventListener('click', () => removeExistingLine(loadedJob, line));
-        sectionEl.appendChild(lineEl);
-        refreshExistingLineAvailability(loadedJob, line);
-
-        if (hasComponents) {
-          const componentsEl = document.createElement('div');
-          componentsEl.className = 'tree-components collapsed';
-          for (const component of components) {
-            const matchedLine = linesByType.get(component.componentTypeId);
-            const qty = matchedLine ? matchedLine.qty : component.quantity;
-            const compLineEl = document.createElement('div');
-            compLineEl.className = 'tree-component-line';
-            compLineEl.innerHTML = `<span class="tree-component-qty">×${qty}</span><span>${escapeHtml(component.componentName || '')}</span>`;
-            componentsEl.appendChild(compLineEl);
-          }
-          sectionEl.appendChild(componentsEl);
-
-          // Composite/Alias contents are collapsed by default (spoiler) -
-          // toggle button lives on the parent line, componentsEl is its own
-          // sibling node right after it in the DOM.
-          const toggleBtn = lineEl.querySelector('.tree-line-toggle');
-          toggleBtn.addEventListener('click', () => {
-            const isCollapsed = componentsEl.classList.toggle('collapsed');
-            toggleBtn.textContent = isCollapsed ? '▸' : '▾';
-            toggleBtn.setAttribute('aria-expanded', String(!isCollapsed));
-          });
-        }
-      }
-    };
+    const knownSectionIds = new Set(orderedSections.map((s) => s.sectionId));
 
     for (const section of orderedSections) {
       const sectionEl = document.createElement('div');
       sectionEl.className = 'tree-section';
-      renderSection(sectionEl, section.sectionId, section.sectionText || `Секция #${section.sectionId}`);
-      if (sectionEl.children.length > 0) existingLinesTreeEl.appendChild(sectionEl);
+      sectionEl.appendChild(buildSectionHeader(loadedJob, section));
+      const sectionLines = linesBySection.get(section.sectionId) || [];
+      if (sectionLines.length > 0) {
+        renderLinesIntoSection(sectionEl, sectionLines, loadedJob);
+      } else {
+        const emptyEl = document.createElement('div');
+        emptyEl.className = 'tree-section-empty';
+        emptyEl.textContent = 'В этой секции пока нет оборудования.';
+        sectionEl.appendChild(emptyEl);
+      }
+      existingLinesTreeEl.appendChild(sectionEl);
     }
 
-    // Lines whose sectionId didn't match any known section (or has none).
-    if (!seenKeys.has('none') && linesBySection.has('none')) {
+    // Lines with no sectionId, or one that doesn't match any known section
+    // (e.g. a section deleted from outside this app) - not a real
+    // EqSections row, so no rename/delete controls, just a plain header.
+    const unsectionedLines = lines.filter((l) => l.sectionId == null || !knownSectionIds.has(l.sectionId));
+    if (unsectionedLines.length > 0) {
       const sectionEl = document.createElement('div');
       sectionEl.className = 'tree-section';
-      renderSection(sectionEl, 'none', 'Без секции');
-      if (sectionEl.children.length > 0) existingLinesTreeEl.appendChild(sectionEl);
+      const header = document.createElement('div');
+      header.className = 'tree-section-header';
+      header.innerHTML = '<span class="tree-section-title">Без секции</span>';
+      sectionEl.appendChild(header);
+      renderLinesIntoSection(sectionEl, unsectionedLines, loadedJob);
+      existingLinesTreeEl.appendChild(sectionEl);
     }
-    for (const key of linesBySection.keys()) {
-      if (seenKeys.has(key) || key === 'none') continue;
-      const sectionEl = document.createElement('div');
-      sectionEl.className = 'tree-section';
-      renderSection(sectionEl, key, `Секция #${key}`);
-      if (sectionEl.children.length > 0) existingLinesTreeEl.appendChild(sectionEl);
+
+    if (orderedSections.length === 0 && unsectionedLines.length === 0) {
+      const emptyEl = document.createElement('div');
+      emptyEl.className = 'tree-empty';
+      emptyEl.textContent = 'На этой работе пока нет оборудования.';
+      existingLinesTreeEl.appendChild(emptyEl);
     }
+
+    existingLinesTreeEl.appendChild(buildAddSectionControl(loadedJob));
   }
 
   // Edit/remove target an already-persisted Sort row (Lineref) - different
@@ -388,21 +542,15 @@
     }
   }
 
-  // Per-line availability for the existing-job tree, in compact "free /
-  // total" form. Updates the line's own DOM node directly by lineRefId
-  // instead of re-rendering the whole tree, so N concurrent lookups don't
-  // retrigger each other in a loop the way the staging-table's
-  // refreshAllAvailability -> renderLines -> (no refetch, just redraw)
-  // pattern relies on.
-  //
-  // check_availability has no notion of "this specific existing line" - it
-  // just reports total-stock-minus-all-overlapping-bookings for the given
-  // type/dates/warehouse, and this line's own already-persisted qty is one
-  // of those overlapping bookings. Left as-is, that self-counts against the
-  // line being edited (increasing its own qty would look blocked by stock
-  // the line already holds). Adding the line's current qty back in gives
-  // the real headroom for growing THIS line - how many more units could be
-  // requested, on top of what's already reserved for this job.
+  // Per-line availability for the existing-job tree: a single remainder
+  // number, active stock in the warehouse minus what this job itself has
+  // booked for this line's date range. Deliberately simple - not the
+  // cross-job "everyone else's overlapping bookings" figure check_availability
+  // itself computes, just this line's own balance against total stock.
+  // Positive = green, exactly zero = yellow, negative = red with its sign
+  // (e.g. "-2") so overbooking a line is visible, not hidden or blocked.
+  // Updates the line's own DOM node directly by lineRefId instead of
+  // re-rendering the whole tree.
   async function refreshExistingLineAvailability(loadedJob, line) {
     const badgeEl = () => existingLinesTreeEl.querySelector(`.tree-line[data-line-ref-id="${line.lineRefId}"] .tree-line-availability`);
     try {
@@ -415,16 +563,12 @@
       const res = await fetch(`/api/create-job/availability?${params.toString()}`);
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'Ошибка проверки доступности');
-      const rawAvailableQty = data.availableQty ?? 0;
       const stocklevelForWarehouse = data.stocklevelForWarehouse ?? 0;
-      // effective = free stock elsewhere + what this line already holds.
-      // rawAvailableQty is what's left to grow into once this line's own
-      // reservation is excluded from the comparison.
-      const effectiveAvailableQty = rawAvailableQty + line.qty;
+      const remainder = stocklevelForWarehouse - line.qty;
       const el = badgeEl();
       if (!el) return;
-      el.textContent = `${effectiveAvailableQty} / ${stocklevelForWarehouse}`;
-      el.className = 'tree-line-availability ' + (effectiveAvailableQty <= 0 ? 'none' : rawAvailableQty <= 0 ? 'low' : 'ok');
+      el.textContent = String(remainder);
+      el.className = 'tree-line-availability ' + (remainder > 0 ? 'ok' : remainder === 0 ? 'zero' : 'none');
     } catch (err) {
       const el = badgeEl();
       if (!el) return;

@@ -1,6 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createEquipmentNoteWithLines = createEquipmentNoteWithLines;
+exports.renameHiretrackSection = renameHiretrackSection;
+exports.createHiretrackSection = createHiretrackSection;
+exports.deleteHiretrackSection = deleteHiretrackSection;
 const hiretrack_odbc_write_1 = require("./hiretrack-odbc-write");
 async function createEquipmentNoteWithLines(input) {
     const { noteId } = await (0, hiretrack_odbc_write_1.runHiretrackOdbcWrite)({
@@ -40,4 +43,13 @@ async function createEquipmentNoteWithLines(input) {
         }
     }
     return { noteId, linesWritten, failedLines };
+}
+async function renameHiretrackSection(sectionId, sectionText) {
+    return (0, hiretrack_odbc_write_1.runHiretrackOdbcWrite)({ operation: 'rename-section', sectionId, sectionText });
+}
+async function createHiretrackSection(eqlistId, sectionText) {
+    return (0, hiretrack_odbc_write_1.runHiretrackOdbcWrite)({ operation: 'create-section', eqlistId, sectionText });
+}
+async function deleteHiretrackSection(sectionId, eqlistId) {
+    return (0, hiretrack_odbc_write_1.runHiretrackOdbcWrite)({ operation: 'delete-section', sectionId, eqlistId });
 }
