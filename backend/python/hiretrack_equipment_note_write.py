@@ -198,11 +198,23 @@ def set_line_section(cursor, params):
     # auto-created "Warehouse Added Equipment" section), not the section the
     # user picked in the create-job UI. This moves it afterward - same plain
     # column write already proven safe for delete-section's NULL case.
+    #
+    # Also bumps SortOrder past whatever's already in the target section:
+    # confirmed live (2026-08-10) that append_to_booking assigns a coarse,
+    # heavily-tied SortOrder (e.g. every appended line in a section getting
+    # the same "2.0", regardless of order added) - not a per-line rank. Left
+    # alone, a newly appended line's position among its section's other
+    # lines is whatever the tie-break happens to fall out to, not
+    # necessarily last. MAX+1 makes "new lines go to the end" reliable.
+    cursor.execute('SELECT MAX("SortOrder") FROM "Sort" WHERE "Eqlno" = ? AND "sectionID" = ?', eqlist_id, section_id)
+    row = cursor.fetchone()
+    next_sort_order = (float(row[0]) if row and row[0] is not None else 0.0) + 1.0
+
     cursor.execute(
-        'UPDATE "Sort" SET "sectionID" = ? WHERE "Lineref" = ? AND "Eqlno" = ?',
-        section_id, lineref_id, eqlist_id,
+        'UPDATE "Sort" SET "sectionID" = ?, "SortOrder" = ? WHERE "Lineref" = ? AND "Eqlno" = ?',
+        section_id, next_sort_order, lineref_id, eqlist_id,
     )
-    return {"lineRefId": lineref_id, "sectionId": section_id}
+    return {"lineRefId": lineref_id, "sectionId": section_id, "sortOrder": next_sort_order}
 
 
 def main():

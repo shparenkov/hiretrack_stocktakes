@@ -413,6 +413,10 @@ export interface AppendLinesToExistingBookingInput {
 export interface AppendLinesToExistingBookingResult {
   linesWritten: number;
   failedLines: { typeId: number; error: string }[];
+  // Per-line detail for successful writes, so a caller (the create-job
+  // frontend) can insert the new line into its own DOM directly instead of
+  // refetching the whole job just to learn the lineRefId HireTrack assigned.
+  writtenLines: { typeId: number; quantity: number; sectionId: number | null; lineRefId: number }[];
 }
 
 // Adds lines to an EXISTING Eqlist (the "open an existing job" flow) - no
@@ -430,6 +434,7 @@ export async function appendLinesToExistingBooking(
 
   let linesWritten = 0;
   const failedLines: { typeId: number; error: string }[] = [];
+  const writtenLines: { typeId: number; quantity: number; sectionId: number | null; lineRefId: number }[] = [];
 
   for (const line of input.lines) {
     try {
@@ -444,10 +449,19 @@ export async function appendLinesToExistingBooking(
         warehouseId: input.warehouseId,
         pricelistId: input.pricelistId,
       });
-      if (line.sectionId != null && result.lineRefId != null) {
+      if (result.lineRefId == null) {
+        throw new Error('append_to_booking did not return a LineRefID.');
+      }
+      if (line.sectionId != null) {
         await setHiretrackLineSection(result.lineRefId, input.eqlistId, line.sectionId);
       }
       linesWritten += 1;
+      writtenLines.push({
+        typeId: line.typeId,
+        quantity: line.quantity,
+        sectionId: line.sectionId ?? null,
+        lineRefId: result.lineRefId,
+      });
     } catch (error) {
       failedLines.push({
         typeId: line.typeId,
@@ -456,7 +470,7 @@ export async function appendLinesToExistingBooking(
     }
   }
 
-  return { linesWritten, failedLines };
+  return { linesWritten, failedLines, writtenLines };
 }
 
 export interface AppendToBookingInput {

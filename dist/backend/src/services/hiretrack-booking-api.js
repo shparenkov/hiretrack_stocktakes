@@ -297,6 +297,7 @@ async function appendLinesToExistingBooking(input) {
     }
     let linesWritten = 0;
     const failedLines = [];
+    const writtenLines = [];
     for (const line of input.lines) {
         try {
             const result = await appendToHiretrackBooking({
@@ -310,10 +311,19 @@ async function appendLinesToExistingBooking(input) {
                 warehouseId: input.warehouseId,
                 pricelistId: input.pricelistId,
             });
-            if (line.sectionId != null && result.lineRefId != null) {
+            if (result.lineRefId == null) {
+                throw new Error('append_to_booking did not return a LineRefID.');
+            }
+            if (line.sectionId != null) {
                 await (0, hiretrack_equipment_note_write_1.setHiretrackLineSection)(result.lineRefId, input.eqlistId, line.sectionId);
             }
             linesWritten += 1;
+            writtenLines.push({
+                typeId: line.typeId,
+                quantity: line.quantity,
+                sectionId: line.sectionId ?? null,
+                lineRefId: result.lineRefId,
+            });
         }
         catch (error) {
             failedLines.push({
@@ -322,7 +332,7 @@ async function appendLinesToExistingBooking(input) {
             });
         }
     }
-    return { linesWritten, failedLines };
+    return { linesWritten, failedLines, writtenLines };
 }
 async function appendToHiretrackBooking(input) {
     const config = loadHiretrackConfig();

@@ -7,6 +7,13 @@
     selectedClient: null,
     loadedJob: null, // { jobRef, eqlistId, clientId, clientName, dateFrom, dateTo, existingLines }
     lines: [], // { typeId, name, categoryName, qty, availability: null | { availableQty, stocklevelForWarehouse, status: 'pending'|'ok'|'low'|'none'|'error' } }
+    // typeId -> { availableQty, stocklevelForWarehouse }. Scoped to the
+    // currently loaded job's fixed date range - fetched at most once per
+    // typeId per job (reused across every search result, tree line, and
+    // newly-inserted line that needs it), reset whenever a different job is
+    // opened. Avoids re-fetching the same item's availability over and over
+    // as search queries get refined/re-typed.
+    availabilityCache: new Map(),
   };
 
   const modeNewBtn = document.getElementById('mode-new');
@@ -206,6 +213,69 @@
     return `<span class="type-badge ${info.cls}">${info.letter}</span>`;
   }
 
+  // Builds one line's DOM (its .tree-line, plus a sibling .tree-components
+  // if it's a Composite/Alias with catalog-known components) but does not
+  // attach it anywhere - callers append it wherever it belongs. Shared by
+  // the full-section render below and the seamless single-line insert used
+  // when a section's "add equipment" widget adds a new line.
+  function buildTreeLineNode(loadedJob, line, linesByType) {
+    const catalogItem = state.catalogById.get(line.typeId);
+    const equipmentType = line.equipmentType ?? catalogItem?.equipmentType ?? 0;
+    const components = catalogItem?.components || [];
+    const hasComponents = equipmentType > 0 && components.length > 0;
+
+    const lineEl = document.createElement('div');
+    lineEl.className = 'tree-line';
+    lineEl.dataset.lineRefId = String(line.lineRefId);
+    lineEl.innerHTML = `
+      ${typeBadgeHtml(equipmentType, line.equipmentClass)}
+      <input type="number" class="tree-line-qty-input" min="1" step="1" value="${line.qty}">
+      ${hasComponents ? '<button type="button" class="tree-line-toggle" aria-expanded="false">▸</button>' : '<span class="tree-line-toggle-spacer"></span>'}
+      <span class="tree-line-name">${escapeHtml(line.name || '')}</span>
+      <span class="tree-line-availability pending">…</span>
+      <button type="button" class="tree-line-remove" title="Удалить" aria-label="Удалить">×</button>
+    `;
+    const qtyInput = lineEl.querySelector('.tree-line-qty-input');
+    // Debounced so clicking the native number-input stepper arrows (each
+    // click commits its own 'change' event immediately) coalesces into one
+    // save instead of firing a request - and a full tree rebuild - per click.
+    const commitQtyChange = debounce(() => {
+      const newQty = Math.max(1, Math.round(Number(qtyInput.value) || 1));
+      qtyInput.value = String(newQty);
+      if (newQty !== line.qty) changeExistingLineQuantity(loadedJob, line, newQty);
+    }, 450);
+    qtyInput.addEventListener('change', commitQtyChange);
+    lineEl.querySelector('.tree-line-remove').addEventListener('click', () => removeExistingLine(loadedJob, line));
+    refreshExistingLineAvailability(loadedJob, line);
+
+    let componentsEl = null;
+    if (hasComponents) {
+      componentsEl = document.createElement('div');
+      componentsEl.className = 'tree-components collapsed';
+      for (const component of components) {
+        const matchedLine = linesByType.get(component.componentTypeId);
+        const qty = matchedLine ? matchedLine.qty : component.quantity;
+        const compLineEl = document.createElement('div');
+        compLineEl.className = 'tree-component-line';
+        compLineEl.innerHTML = `<span class="tree-component-qty">${qty} ×</span><span>${escapeHtml(component.componentName || '')}</span>`;
+        componentsEl.appendChild(compLineEl);
+      }
+
+      // Composite/Alias contents are collapsed by default (spoiler) -
+      // toggle button lives on the parent line, componentsEl is its own
+      // sibling node right after it in the DOM.
+      const toggleBtn = lineEl.querySelector('.tree-line-toggle');
+      const componentsElRef = componentsEl;
+      toggleBtn.addEventListener('click', () => {
+        const isCollapsed = componentsElRef.classList.toggle('collapsed');
+        toggleBtn.textContent = isCollapsed ? '▸' : '▾';
+        toggleBtn.setAttribute('aria-expanded', String(!isCollapsed));
+      });
+    }
+
+    return { lineEl, componentsEl };
+  }
+
   // Renders one section's lines (Composite/Alias nested under their own
   // line) into sectionEl. Shared by every section, including the
   // "Без секции" bucket and empty newly-created sections.
@@ -233,62 +303,9 @@
 
     for (const line of sectionLines) {
       if (absorbedTypeIds.has(line.typeId)) continue;
-
-      const catalogItem = state.catalogById.get(line.typeId);
-      const equipmentType = line.equipmentType ?? catalogItem?.equipmentType ?? 0;
-      const components = catalogItem?.components || [];
-
-      const hasComponents = equipmentType > 0 && components.length > 0;
-
-      const lineEl = document.createElement('div');
-      lineEl.className = 'tree-line';
-      lineEl.dataset.lineRefId = String(line.lineRefId);
-      lineEl.innerHTML = `
-        ${typeBadgeHtml(equipmentType, line.equipmentClass)}
-        <input type="number" class="tree-line-qty-input" min="1" step="1" value="${line.qty}">
-        ${hasComponents ? '<button type="button" class="tree-line-toggle" aria-expanded="false">▸</button>' : '<span class="tree-line-toggle-spacer"></span>'}
-        <span class="tree-line-name">${escapeHtml(line.name || '')}</span>
-        <span class="tree-line-availability pending">…</span>
-        <button type="button" class="tree-line-remove" title="Удалить" aria-label="Удалить">×</button>
-      `;
-      const qtyInput = lineEl.querySelector('.tree-line-qty-input');
-      // Debounced so clicking the native number-input stepper arrows
-      // (each click commits its own 'change' event immediately) coalesces
-      // into one save instead of firing a request - and a full tree
-      // rebuild - per click.
-      const commitQtyChange = debounce(() => {
-        const newQty = Math.max(1, Math.round(Number(qtyInput.value) || 1));
-        qtyInput.value = String(newQty);
-        if (newQty !== line.qty) changeExistingLineQuantity(loadedJob, line, newQty);
-      }, 450);
-      qtyInput.addEventListener('change', commitQtyChange);
-      lineEl.querySelector('.tree-line-remove').addEventListener('click', () => removeExistingLine(loadedJob, line));
+      const { lineEl, componentsEl } = buildTreeLineNode(loadedJob, line, linesByType);
       sectionEl.appendChild(lineEl);
-      refreshExistingLineAvailability(loadedJob, line);
-
-      if (hasComponents) {
-        const componentsEl = document.createElement('div');
-        componentsEl.className = 'tree-components collapsed';
-        for (const component of components) {
-          const matchedLine = linesByType.get(component.componentTypeId);
-          const qty = matchedLine ? matchedLine.qty : component.quantity;
-          const compLineEl = document.createElement('div');
-          compLineEl.className = 'tree-component-line';
-          compLineEl.innerHTML = `<span class="tree-component-qty">${qty} ×</span><span>${escapeHtml(component.componentName || '')}</span>`;
-          componentsEl.appendChild(compLineEl);
-        }
-        sectionEl.appendChild(componentsEl);
-
-        // Composite/Alias contents are collapsed by default (spoiler) -
-        // toggle button lives on the parent line, componentsEl is its own
-        // sibling node right after it in the DOM.
-        const toggleBtn = lineEl.querySelector('.tree-line-toggle');
-        toggleBtn.addEventListener('click', () => {
-          const isCollapsed = componentsEl.classList.toggle('collapsed');
-          toggleBtn.textContent = isCollapsed ? '▸' : '▾';
-          toggleBtn.setAttribute('aria-expanded', String(!isCollapsed));
-        });
-      }
+      if (componentsEl) sectionEl.appendChild(componentsEl);
     }
   }
 
@@ -437,12 +454,50 @@
     return wrap;
   }
 
+  // Inserts a just-written line directly into the DOM at the end of its
+  // section - no refetch/full tree rebuild. catalogById already has this
+  // line's name/type (it was just shown as a search result), and its
+  // availability is already cached from that same search (see
+  // getAvailability), so nothing here needs a network round-trip.
+  function insertNewLine(loadedJob, section, written) {
+    const catalogItem = state.catalogById.get(written.typeId);
+    const line = {
+      typeId: written.typeId,
+      name: catalogItem ? catalogItem.name : `#${written.typeId}`,
+      qty: written.quantity,
+      sectionId: section.sectionId,
+      equipmentType: catalogItem ? catalogItem.equipmentType : 0,
+      equipmentClass: catalogItem ? catalogItem.class : null,
+      lineRefId: written.lineRefId,
+    };
+    loadedJob.existingLines.push(line);
+
+    const sectionEl = existingLinesTreeEl.querySelector(`.tree-section[data-section-id="${section.sectionId}"]`);
+    if (sectionEl) {
+      const emptyEl = sectionEl.querySelector('.tree-section-empty');
+      if (emptyEl) emptyEl.remove();
+      const linesByType = new Map(
+        loadedJob.existingLines.filter((l) => l.sectionId === section.sectionId).map((l) => [l.typeId, l]),
+      );
+      const { lineEl, componentsEl } = buildTreeLineNode(loadedJob, line, linesByType);
+      // appendChild always lands at the end of sectionEl's current children
+      // (header, add-widget, every prior line) - "after all already-added
+      // lines" falls out naturally from DOM append order.
+      sectionEl.appendChild(lineEl);
+      if (componentsEl) sectionEl.appendChild(componentsEl);
+    }
+
+    const searchInput = existingLinesTreeEl.querySelector(`.section-add[data-section-id="${section.sectionId}"] .section-add-search`);
+    if (searchInput) searchInput.focus();
+  }
+
   // Appends one line directly to loadedJob's Eqlist, tagged with this
   // section (api_v2's append_to_booking has no section param of its own -
   // the backend moves the new line into place afterward, see
-  // setHiretrackLineSection). Reloads the tree and refocuses this same
-  // section's search box on success, so entering several items in a row
-  // stays a tight loop.
+  // setHiretrackLineSection, which also pushes its SortOrder past whatever
+  // else is already in the section so it lands last there too on a future
+  // reload). Inserts the new line directly (see insertNewLine) instead of
+  // reloading/rebuilding the whole tree.
   async function addEquipmentToSection(loadedJob, section, typeId, qty) {
     jobRefStatusEl.textContent = 'Добавляем оборудование…';
     try {
@@ -459,27 +514,34 @@
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'Не удалось добавить оборудование');
-      if (data.linesWritten === 0) {
+      const written = data.writtenLines && data.writtenLines[0];
+      if (!written) {
         const failure = data.failedLines && data.failedLines[0];
         throw new Error((failure && failure.error) || 'HireTrack отклонил позицию');
       }
       jobRefStatusEl.textContent = '';
-      await openExistingJob(loadedJob.jobRef, section.sectionId);
+      insertNewLine(loadedJob, section, written);
     } catch (err) {
       jobRefStatusEl.textContent = `Ошибка добавления: ${err.message}`;
     }
   }
 
   // Per-section "add equipment" widget, rendered at the top of every real
-  // section - search + inline qty, arrow-key/Enter selection, and
-  // availability shown directly on each result row ("10/10"), all aimed at
-  // fast consecutive entry without a separate staging table.
+  // section - search with an inline qty field nested right inside the same
+  // box, arrow-key/Enter selection, and availability shown directly on each
+  // result row ("10/10"), all aimed at fast consecutive entry without a
+  // separate staging table.
+  //
+  // Keyboard flow: type to filter -> ArrowUp/ArrowDown highlights a result
+  // AND moves focus into the qty field (so the very next keystrokes are the
+  // quantity, no extra Tab/click) -> Enter (from either field) adds the
+  // highlighted result with whatever qty is currently typed.
   function buildSectionAddWidget(loadedJob, section) {
     const wrap = document.createElement('div');
     wrap.className = 'section-add';
     wrap.dataset.sectionId = String(section.sectionId);
     wrap.innerHTML = `
-      <div class="section-add-row">
+      <div class="section-add-box">
         <input type="text" class="section-add-search" placeholder="Добавить оборудование в эту секцию…" autocomplete="off">
         <input type="number" class="section-add-qty" min="1" step="1" value="1">
       </div>
@@ -491,7 +553,6 @@
 
     let matches = [];
     let highlightedIndex = -1;
-    let searchToken = 0;
 
     const closeResults = () => {
       resultsEl.classList.add('hidden');
@@ -507,12 +568,40 @@
       highlightedIndex = index;
     };
 
+    const focusQty = () => {
+      qtyInput.focus();
+      qtyInput.select();
+    };
+
     const commitAdd = (typeId) => {
       const qty = Math.max(1, Math.round(Number(qtyInput.value) || 1));
       closeResults();
       searchInput.value = '';
       qtyInput.value = '1';
       addEquipmentToSection(loadedJob, section, typeId, qty);
+    };
+
+    // ArrowUp/Down always drive result navigation, even while focus is in
+    // the qty field (which would otherwise treat them as its own native
+    // step up/down) - the qty field is for typing a number, not stepping it.
+    const handleNavKeydown = (e) => {
+      if (e.key === 'ArrowDown') {
+        if (matches.length === 0) return;
+        e.preventDefault();
+        setHighlighted(Math.min(highlightedIndex + 1, matches.length - 1));
+        focusQty();
+      } else if (e.key === 'ArrowUp') {
+        if (matches.length === 0) return;
+        e.preventDefault();
+        setHighlighted(Math.max(highlightedIndex - 1, 0));
+        focusQty();
+      } else if (e.key === 'Enter') {
+        if (matches.length === 0) return;
+        e.preventDefault();
+        commitAdd(matches[highlightedIndex >= 0 ? highlightedIndex : 0].typeId);
+      } else if (e.key === 'Escape') {
+        closeResults();
+      }
     };
 
     const runSearch = (query) => {
@@ -535,8 +624,6 @@
         return;
       }
 
-      const token = ++searchToken;
-      const desiredQty = Math.max(1, Math.round(Number(qtyInput.value) || 1));
       resultsEl.innerHTML = '';
       matches.forEach((item) => {
         const row = document.createElement('div');
@@ -554,23 +641,13 @@
         resultsEl.appendChild(row);
 
         const availEl = row.querySelector('.section-add-result-avail');
-        const params = new URLSearchParams({
-          typeId: String(item.typeId),
-          quantity: String(desiredQty),
-          dateFrom: loadedJob.dateFrom,
-          dateTo: loadedJob.dateTo,
-        });
-        fetch(`/api/create-job/availability?${params.toString()}`)
-          .then((res) => res.json())
-          .then((data) => {
-            if (token !== searchToken || !data.ok) throw new Error(data && data.error);
-            const availableQty = data.availableQty ?? 0;
-            const stocklevelForWarehouse = data.stocklevelForWarehouse ?? 0;
+        getAvailability(item.typeId, loadedJob)
+          .then(({ availableQty, stocklevelForWarehouse }) => {
+            const desiredQty = Math.max(1, Math.round(Number(qtyInput.value) || 1));
             availEl.textContent = `${availableQty}/${stocklevelForWarehouse}`;
             availEl.className = 'section-add-result-avail ' + (availableQty <= 0 ? 'none' : availableQty < desiredQty ? 'low' : 'ok');
           })
           .catch(() => {
-            if (token !== searchToken) return;
             availEl.textContent = '?';
             availEl.className = 'section-add-result-avail none';
           });
@@ -580,23 +657,8 @@
     };
 
     searchInput.addEventListener('input', debounce(() => runSearch(searchInput.value), 200));
-    searchInput.addEventListener('keydown', (e) => {
-      if (e.key === 'ArrowDown') {
-        if (matches.length === 0) return;
-        e.preventDefault();
-        setHighlighted(Math.min(highlightedIndex + 1, matches.length - 1));
-      } else if (e.key === 'ArrowUp') {
-        if (matches.length === 0) return;
-        e.preventDefault();
-        setHighlighted(Math.max(highlightedIndex - 1, 0));
-      } else if (e.key === 'Enter') {
-        if (matches.length === 0) return;
-        e.preventDefault();
-        commitAdd(matches[highlightedIndex >= 0 ? highlightedIndex : 0].typeId);
-      } else if (e.key === 'Escape') {
-        closeResults();
-      }
-    });
+    searchInput.addEventListener('keydown', handleNavKeydown);
+    qtyInput.addEventListener('keydown', handleNavKeydown);
 
     return wrap;
   }
@@ -626,6 +688,7 @@
     for (const section of orderedSections) {
       const sectionEl = document.createElement('div');
       sectionEl.className = 'tree-section';
+      sectionEl.dataset.sectionId = String(section.sectionId);
       sectionEl.appendChild(buildSectionHeader(loadedJob, section));
       sectionEl.appendChild(buildSectionAddWidget(loadedJob, section));
       const sectionLines = linesBySection.get(section.sectionId) || [];
@@ -712,6 +775,39 @@
     }
   }
 
+  // Fetches (and caches) a type's availability for the currently loaded
+  // job's fixed date range - shared by tree lines, section-add search
+  // results, and newly-inserted lines, so the same typeId is never fetched
+  // twice in one job session. Caches the in-flight promise too (not just
+  // the resolved value), so concurrent callers for the same typeId (e.g.
+  // several search rows resolving at once) share one request instead of
+  // each firing their own.
+  function getAvailability(typeId, loadedJob) {
+    if (state.availabilityCache.has(typeId)) {
+      return Promise.resolve(state.availabilityCache.get(typeId));
+    }
+    const params = new URLSearchParams({
+      typeId: String(typeId),
+      quantity: '1',
+      dateFrom: loadedJob.dateFrom,
+      dateTo: loadedJob.dateTo,
+    });
+    const promise = fetch(`/api/create-job/availability?${params.toString()}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (!data.ok) throw new Error(data.error || 'Ошибка проверки доступности');
+        const result = { availableQty: data.availableQty ?? 0, stocklevelForWarehouse: data.stocklevelForWarehouse ?? 0 };
+        state.availabilityCache.set(typeId, result);
+        return result;
+      })
+      .catch((err) => {
+        state.availabilityCache.delete(typeId);
+        throw err;
+      });
+    state.availabilityCache.set(typeId, promise);
+    return promise;
+  }
+
   // Per-line availability for the existing-job tree: a single remainder
   // number, active stock in the warehouse minus what this job itself has
   // booked for this line's date range. Deliberately simple - not the
@@ -724,16 +820,7 @@
   async function refreshExistingLineAvailability(loadedJob, line) {
     const badgeEl = () => existingLinesTreeEl.querySelector(`.tree-line[data-line-ref-id="${line.lineRefId}"] .tree-line-availability`);
     try {
-      const params = new URLSearchParams({
-        typeId: String(line.typeId),
-        quantity: String(line.qty),
-        dateFrom: loadedJob.dateFrom,
-        dateTo: loadedJob.dateTo,
-      });
-      const res = await fetch(`/api/create-job/availability?${params.toString()}`);
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || 'Ошибка проверки доступности');
-      const stocklevelForWarehouse = data.stocklevelForWarehouse ?? 0;
+      const { stocklevelForWarehouse } = await getAvailability(line.typeId, loadedJob);
       const remainder = stocklevelForWarehouse - line.qty;
       const el = badgeEl();
       if (!el) return;
@@ -757,6 +844,7 @@
       return;
     }
     state.loadedJob = null;
+    state.availabilityCache = new Map();
     jobLoadedInfoEl.classList.add('hidden');
     jobRefStatusEl.textContent = 'Загрузка…';
     try {

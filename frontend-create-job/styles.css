@@ -306,22 +306,35 @@ main {
   border-top: 1px solid #eef2f5;
 }
 
-.section-add-row { display: flex; gap: 6px; }
+/* One bordered box holding both fields - qty sits nested inside it, on the
+   search input's own right edge, rather than as a separate box next to it. */
+.section-add-box {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+.section-add-box:focus-within { outline: 2px solid var(--blue); outline-offset: -1px; }
 
 .section-add-search {
   flex: 1;
+  min-width: 0;
   padding: 6px 8px;
-  border: 1px solid var(--line);
+  border: none;
   font: 13px Arial, sans-serif;
 }
-.section-add-search:focus { outline: 2px solid var(--blue); outline-offset: -1px; }
+.section-add-search:focus { outline: none; }
 
 .section-add-qty {
-  width: 56px;
+  width: 52px;
   padding: 6px 8px;
-  border: 1px solid var(--line);
-  font: 13px Arial, sans-serif;
+  border: none;
+  border-left: 1px solid var(--line);
+  background: var(--canvas);
+  text-align: center;
+  font: 700 13px Arial, sans-serif;
 }
+.section-add-qty:focus { outline: none; background: #fff; }
 
 .section-add-results {
   position: absolute;
