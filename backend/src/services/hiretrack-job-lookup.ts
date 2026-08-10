@@ -16,6 +16,10 @@ export interface HiretrackJobLookupLine {
   // type's `components` from the already-loaded catalog cache to render a
   // nested view for Composite/Alias lines, so no extra fetch is needed here.
   equipmentType: number | null;
+  // Hetype.Class - TEquipmentClass: 0=ecRental, 1=ecConsumable,
+  // 2=ecNewSales, 3=ecExRentalSales (confirmed live via #Fields.FIELD_DESC).
+  // 1 (Consumable) gets its own badge in the frontend.
+  equipmentClass: number | null;
   // Sort.Lineref - what api_v2's change_booking_quantity/remove_from_booking
   // target (the same value append_to_booking returns as LineRefID).
   lineRefId: number;
@@ -65,6 +69,7 @@ interface RawEqlistRow {
     SectionId: number | null;
     EquipmentType: number | null;
     LineRefId: number;
+    Class: number | null;
   }[];
   sections: RawSectionRow[];
 }
@@ -171,6 +176,7 @@ export async function lookupHiretrackJob(jobRef: string): Promise<HiretrackJobLo
         qty: line.Quant,
         sectionId: line.SectionId ?? null,
         equipmentType: line.EquipmentType ?? null,
+        equipmentClass: line.Class ?? null,
         lineRefId: line.LineRefId,
       })),
     });

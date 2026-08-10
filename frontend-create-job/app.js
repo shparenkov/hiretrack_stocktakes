@@ -176,18 +176,29 @@
   });
 
   // TEquipmentType: 0=etSimple, 1=etCompositeKit, 2=etAliasKit,
-  // 3=etPricedAliasKit, 4=etMarkup.
+  // 3=etPricedAliasKit, 4=etMarkup. Single-letter badges, first letter of
+  // the original English name - Composite/Alias/PricedAlias/Markup take
+  // priority over the Consumable class check below, since a kit type is
+  // essentially never also Class=Consumable in practice.
   const EQUIPMENT_TYPE_BADGES = {
-    0: { cls: 'normal', label: 'Обычное' },
-    1: { cls: 'composite', label: 'Composite' },
-    2: { cls: 'alias', label: 'Alias' },
-    3: { cls: 'priced-alias', label: 'Priced Alias' },
-    4: { cls: 'markup', label: 'Markup' },
+    0: { cls: 'normal', letter: 'N' },
+    1: { cls: 'composite', letter: 'C' },
+    2: { cls: 'alias', letter: 'A' },
+    3: { cls: 'alias', letter: 'A' },
+    4: { cls: 'normal', letter: 'M' },
   };
 
-  function typeBadgeHtml(equipmentType) {
+  // Hetype.Class (TEquipmentClass, confirmed live via #Fields.FIELD_DESC:
+  // "ecRental, ecConsumable, ecNewSales, ecExRentalSales (0..3)") - a
+  // separate axis from EquipmentType. Only Consumable (1) gets its own badge.
+  const CONSUMABLE_CLASS = 1;
+
+  function typeBadgeHtml(equipmentType, equipmentClass) {
+    if ((equipmentType ?? 0) === 0 && equipmentClass === CONSUMABLE_CLASS) {
+      return '<span class="type-badge consumable">C</span>';
+    }
     const info = EQUIPMENT_TYPE_BADGES[equipmentType] || EQUIPMENT_TYPE_BADGES[0];
-    return `<span class="type-badge ${info.cls}">${info.label}</span>`;
+    return `<span class="type-badge ${info.cls}">${info.letter}</span>`;
   }
 
   // Nested view: Sections -> lines -> (for Composite/Alias lines) their
@@ -255,12 +266,13 @@
 
         const lineEl = document.createElement('div');
         lineEl.className = 'tree-line';
+        lineEl.dataset.lineRefId = String(line.lineRefId);
         lineEl.innerHTML = `
-          <span class="tree-line-name">${escapeHtml(line.name || '')} <span class="meta">#${line.typeId}</span></span>
-          ${typeBadgeHtml(equipmentType)}
-          <span class="tree-line-qty-prefix">×</span>
+          ${typeBadgeHtml(equipmentType, line.equipmentClass)}
           <input type="number" class="tree-line-qty-input" min="1" step="1" value="${line.qty}">
-          <button type="button" class="tree-line-remove">Удалить</button>
+          <span class="tree-line-name">${escapeHtml(line.name || '')}</span>
+          <span class="tree-line-availability pending">…</span>
+          <button type="button" class="tree-line-remove" title="Удалить" aria-label="Удалить">×</button>
         `;
         const qtyInput = lineEl.querySelector('.tree-line-qty-input');
         qtyInput.addEventListener('change', () => {
@@ -270,6 +282,7 @@
         });
         lineEl.querySelector('.tree-line-remove').addEventListener('click', () => removeExistingLine(loadedJob, line));
         sectionEl.appendChild(lineEl);
+        refreshExistingLineAvailability(loadedJob, line);
 
         if (equipmentType > 0 && components.length > 0) {
           const componentsEl = document.createElement('div');
@@ -279,7 +292,7 @@
             const qty = matchedLine ? matchedLine.qty : component.quantity;
             const compLineEl = document.createElement('div');
             compLineEl.className = 'tree-component-line';
-            compLineEl.innerHTML = `<span>${escapeHtml(component.componentName || '')} <span class="meta">#${component.componentTypeId}</span></span><span class="tree-component-qty">×${qty}</span>`;
+            compLineEl.innerHTML = `<span>${escapeHtml(component.componentName || '')}</span><span class="tree-component-qty">×${qty}</span>`;
             componentsEl.appendChild(compLineEl);
           }
           sectionEl.appendChild(componentsEl);
@@ -344,6 +357,38 @@
       await openExistingJob(loadedJob.jobRef);
     } catch (err) {
       jobRefStatusEl.textContent = `Ошибка удаления: ${err.message}`;
+    }
+  }
+
+  // Per-line availability for the existing-job tree, in compact "free /
+  // total" form. Updates the line's own DOM node directly by lineRefId
+  // instead of re-rendering the whole tree, so N concurrent lookups don't
+  // retrigger each other in a loop the way the staging-table's
+  // refreshAllAvailability -> renderLines -> (no refetch, just redraw)
+  // pattern relies on.
+  async function refreshExistingLineAvailability(loadedJob, line) {
+    const badgeEl = () => existingLinesTreeEl.querySelector(`.tree-line[data-line-ref-id="${line.lineRefId}"] .tree-line-availability`);
+    try {
+      const params = new URLSearchParams({
+        typeId: String(line.typeId),
+        quantity: String(line.qty),
+        dateFrom: loadedJob.dateFrom,
+        dateTo: loadedJob.dateTo,
+      });
+      const res = await fetch(`/api/create-job/availability?${params.toString()}`);
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'Ошибка проверки доступности');
+      const availableQty = data.availableQty ?? 0;
+      const stocklevelForWarehouse = data.stocklevelForWarehouse ?? 0;
+      const el = badgeEl();
+      if (!el) return;
+      el.textContent = `${availableQty} / ${stocklevelForWarehouse}`;
+      el.className = 'tree-line-availability ' + (availableQty <= 0 ? 'none' : availableQty < line.qty ? 'low' : 'ok');
+    } catch (err) {
+      const el = badgeEl();
+      if (!el) return;
+      el.textContent = '?';
+      el.className = 'tree-line-availability none';
     }
   }
 
