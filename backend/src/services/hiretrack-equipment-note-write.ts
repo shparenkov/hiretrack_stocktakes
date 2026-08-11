@@ -149,3 +149,41 @@ export async function forceHiretrackLineQuantity(
 ): Promise<ForceLineQuantityResult> {
   return runHiretrackOdbcWrite<ForceLineQuantityResult>({ operation: 'force-line-quantity', lineRefId, eqlistId, quantity });
 }
+
+// api_v2's initialise_new_booking never sets Jobs.Type/Handler/SalesPerson at
+// all (confirmed live - all three were NULL on every job created through
+// /create-job/ so far). Plain Jobs columns, no pricing/stored-function
+// entanglement like Eqlists has, so a direct UPDATE is safe. Only sets
+// whichever of the three fields is actually passed.
+export interface UpdateJobHeaderInput {
+  jobId: number;
+  type?: number;
+  handler?: number;
+  salesPerson?: number;
+}
+
+export async function updateHiretrackJobHeader(input: UpdateJobHeaderInput): Promise<void> {
+  await runHiretrackOdbcWrite({
+    operation: 'update-job-header',
+    jobId: input.jobId,
+    type: input.type ?? null,
+    handler: input.handler ?? null,
+    salesPerson: input.salesPerson ?? null,
+  });
+}
+
+// CONTACTS has no standalone "company address book" - HireTrack NX itself
+// creates a fresh row per job even when it's really the same real Name2
+// person being reused (confirmed live: the same Person id recurs across many
+// CONTACTS rows with different xLink/job numbers), so this mirrors that
+// convention. MainContact=TRUE always, since v1 only has one contact-picker
+// slot per job.
+export interface AddJobContactResult {
+  companyId: number;
+  personId: number;
+  jobId: number;
+}
+
+export async function addHiretrackJobContact(companyId: number, personId: number, jobId: number): Promise<AddJobContactResult> {
+  return runHiretrackOdbcWrite<AddJobContactResult>({ operation: 'add-job-contact', companyId, personId, jobId });
+}

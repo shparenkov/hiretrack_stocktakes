@@ -159,6 +159,91 @@ export async function listRecentHiretrackJobs(days = 7): Promise<HiretrackRecent
   }));
 }
 
+export interface HiretrackJobDefaults {
+  startTime: string; // "HH:MM:SS"
+  endTime: string; // "HH:MM:SS"
+  periodDays: number;
+}
+
+interface RawJobDefaultsRow {
+  DefaultJobStartTime: string;
+  DefaultJobEndTime: string;
+  DefaultJobPeriod: number;
+}
+
+// HireTrack NX's own "Jobs > Defaults" settings (Rules table) - read live
+// (not hardcoded) so an admin's later change in HireTrack NX is picked up
+// without a redeploy. Falls back to the confirmed-live production values
+// (14:00/12:00/2 days) only if the Rules row is somehow missing, so the
+// create-job form still has sane defaults rather than breaking.
+export async function getHiretrackJobDefaults(): Promise<HiretrackJobDefaults> {
+  const raw = await runHiretrackOdbcRead<RawJobDefaultsRow | null>({
+    operation: 'job-defaults',
+    siteId: 1,
+  });
+  return {
+    startTime: raw?.DefaultJobStartTime ?? '14:00:00',
+    endTime: raw?.DefaultJobEndTime ?? '12:00:00',
+    periodDays: raw?.DefaultJobPeriod ?? 2,
+  };
+}
+
+export interface HiretrackUserResult {
+  uid: number;
+  userName: string;
+  displayName: string;
+}
+
+interface RawUserRow {
+  UID: number;
+  UserName: string;
+  FirstName: string | null;
+  LastName: string | null;
+}
+
+// Active, non-crew Users - for the Sales Person picker.
+export async function listHiretrackUsers(): Promise<HiretrackUserResult[]> {
+  const rows = await runHiretrackOdbcRead<RawUserRow[]>({ operation: 'users-list' });
+  return rows.map((row) => {
+    const fullName = [row.FirstName, row.LastName].filter(Boolean).join(' ').trim();
+    return { uid: row.UID, userName: row.UserName, displayName: fullName || row.UserName };
+  });
+}
+
+export interface HiretrackClientContactResult {
+  personId: number;
+  fullName: string | null;
+  telephone: string | null;
+  mobile: string | null;
+  email: string | null;
+}
+
+interface RawClientContactRow {
+  Person: number;
+  FullName: string | null;
+  Telephone: string | null;
+  Mobile: string | null;
+  EMAIL: string | null;
+}
+
+// People (Name2 rows) previously linked to this client Company via any past
+// job's CONTACTS row - CONTACTS has no standalone "company address book",
+// every job gets its own row even when it's really the same real person
+// reused (confirmed live), so this dedupes by Person.
+export async function listHiretrackClientContacts(clientId: number): Promise<HiretrackClientContactResult[]> {
+  const rows = await runHiretrackOdbcRead<RawClientContactRow[]>({
+    operation: 'client-contacts',
+    clientId,
+  });
+  return rows.map((row) => ({
+    personId: row.Person,
+    fullName: row.FullName ?? null,
+    telephone: row.Telephone ?? null,
+    mobile: row.Mobile ?? null,
+    email: row.EMAIL ?? null,
+  }));
+}
+
 // Drops any fractional-second component and normalizes to a bare space
 // separator ("YYYY-MM-DD HH:MM:SS") - the ODBC bridge serializes datetimes
 // via Python's .isoformat(), which is "T"-separated and includes

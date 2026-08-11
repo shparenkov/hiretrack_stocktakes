@@ -4,7 +4,7 @@ import https from 'https';
 import http from 'http';
 import { URL } from 'url';
 import { runHiretrackOdbcWrite } from './hiretrack-odbc-write';
-import { setHiretrackLineSection, forceHiretrackLineQuantity } from './hiretrack-equipment-note-write';
+import { setHiretrackLineSection, forceHiretrackLineQuantity, updateHiretrackJobHeader, addHiretrackJobContact } from './hiretrack-equipment-note-write';
 
 interface HiretrackConfig {
   hiretrack?: {
@@ -28,6 +28,8 @@ const FALLBACK_USER_ID = 1;
 const FALLBACK_WAREHOUSE_ID = 1;
 const FALLBACK_PRICELIST_ID = 6;
 const FALLBACK_TEST_CLIENT_ID = 2;
+// jobtypes.Type_idx for "Аренда" (Rental) - confirmed live 2026-08-11.
+const RENTAL_JOB_TYPE_ID = 2;
 
 function resolveConfigPath() {
   return path.resolve(process.cwd(), '..', 'hiretrack.config.json');
@@ -338,6 +340,14 @@ export interface CreateJobShellInput {
   // required-shape. Callers pass any real catalog typeId they already have
   // loaded client-side.
   placeholderTypeId: number;
+  // Explicit override for Jobs.SalesPerson (Users.UID) - defaults to
+  // FALLBACK_USER_ID when omitted. Jobs.Type is always set to "Аренда"
+  // (RENTAL_JOB_TYPE_ID) and Jobs.Handler always defaults to FALLBACK_USER_ID
+  // too - neither has its own picker yet, see EQUIPMENT_CATALOG_MATCH_BLUEPRINT.md.
+  salesPersonId?: number;
+  // Links an existing Name2 person (from listHiretrackClientContacts) to the
+  // new job via a fresh CONTACTS row - optional, skipped entirely when omitted.
+  contactPersonId?: number;
 }
 
 export interface CreateJobShellResult {
@@ -375,6 +385,17 @@ export async function createHiretrackJobShell(input: CreateJobShellInput): Promi
   // Same for the Eql_Title "JobName:AutoCode" concatenation - see
   // updateHiretrackEqlistTitle's own comment.
   await updateHiretrackEqlistTitle(init.eqlistId, input.jobName);
+  // api_v2 never sets Jobs.Type/Handler/SalesPerson at all - see
+  // updateHiretrackJobHeader's own comment.
+  await updateHiretrackJobHeader({
+    jobId: init.jobId,
+    type: RENTAL_JOB_TYPE_ID,
+    handler: FALLBACK_USER_ID,
+    salesPerson: input.salesPersonId ?? FALLBACK_USER_ID,
+  });
+  if (input.contactPersonId) {
+    await addHiretrackJobContact(input.clientId, input.contactPersonId, init.jobId);
+  }
 
   return { jobId: init.jobId, jobRef: init.jobRef, eqlistId: init.eqlistId, eqRef: init.eqRef };
 }

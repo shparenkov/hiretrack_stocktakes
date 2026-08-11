@@ -6,6 +6,8 @@ exports.createHiretrackSection = createHiretrackSection;
 exports.deleteHiretrackSection = deleteHiretrackSection;
 exports.setHiretrackLineSection = setHiretrackLineSection;
 exports.forceHiretrackLineQuantity = forceHiretrackLineQuantity;
+exports.updateHiretrackJobHeader = updateHiretrackJobHeader;
+exports.addHiretrackJobContact = addHiretrackJobContact;
 const hiretrack_odbc_write_1 = require("./hiretrack-odbc-write");
 async function createEquipmentNoteWithLines(input) {
     const { noteId } = await (0, hiretrack_odbc_write_1.runHiretrackOdbcWrite)({
@@ -60,4 +62,16 @@ async function setHiretrackLineSection(lineRefId, eqlistId, sectionId) {
 }
 async function forceHiretrackLineQuantity(lineRefId, eqlistId, quantity) {
     return (0, hiretrack_odbc_write_1.runHiretrackOdbcWrite)({ operation: 'force-line-quantity', lineRefId, eqlistId, quantity });
+}
+async function updateHiretrackJobHeader(input) {
+    await (0, hiretrack_odbc_write_1.runHiretrackOdbcWrite)({
+        operation: 'update-job-header',
+        jobId: input.jobId,
+        type: input.type ?? null,
+        handler: input.handler ?? null,
+        salesPerson: input.salesPerson ?? null,
+    });
+}
+async function addHiretrackJobContact(companyId, personId, jobId) {
+    return (0, hiretrack_odbc_write_1.runHiretrackOdbcWrite)({ operation: 'add-job-contact', companyId, personId, jobId });
 }

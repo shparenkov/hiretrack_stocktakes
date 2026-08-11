@@ -14,7 +14,14 @@
     // opened. Avoids re-fetching the same item's availability over and over
     // as search queries get refined/re-typed.
     availabilityCache: new Map(),
+    jobDefaults: null, // { startTime, endTime, periodDays } - HireTrack's own Jobs>Defaults settings
+    salesPeople: [],
   };
+
+  // Set only by a genuine user edit on dateToInput (programmatic .value
+  // writes don't fire 'input') - stops applyDefaultDateTo from clobbering a
+  // date the user picked on purpose. Reset in resetNewJobForm.
+  let dateToManuallyEdited = false;
 
   const modeNewBtn = document.getElementById('mode-new');
   const modeExistingBtn = document.getElementById('mode-existing');
@@ -42,11 +49,15 @@
   const dateToReadbackEl = document.getElementById('date-to-readback');
   const dateRangeErrorEl = document.getElementById('date-range-error');
 
+  const salesPersonSelectEl = document.getElementById('sales-person-select');
+
   const clientSearchInput = document.getElementById('client-search');
   const clientResultsEl = document.getElementById('client-results');
   const clientSelectedEl = document.getElementById('client-selected');
   const clientSelectedNameEl = document.getElementById('client-selected-name');
   const clientClearBtn = document.getElementById('client-clear');
+  const contactPersonRowEl = document.getElementById('contact-person-row');
+  const contactPersonSelectEl = document.getElementById('contact-person-select');
 
   const loadStatusEl = document.getElementById('load-status');
 
@@ -113,6 +124,44 @@
     const rangeInvalid = Boolean(dateFrom && dateTo && dateFrom >= dateTo);
     dateRangeErrorEl.classList.toggle('hidden', !rangeInvalid);
     return !rangeInvalid;
+  }
+
+  function formatLocalDateTime(date) {
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  }
+
+  // Pre-fills dateFromInput with "today at HireTrack's DefaultJobStartTime"
+  // the first time the new-job form is shown (or reset) - previously both
+  // date fields started empty and required the user to type a full
+  // datetime by hand for every job. Never overwrites a value already there
+  // (e.g. state.jobDefaults arriving after the user already started typing).
+  function applyDefaultDates() {
+    if (!state.jobDefaults || dateFromInput.value) return;
+    const [startH, startM] = state.jobDefaults.startTime.split(':').map(Number);
+    const from = new Date();
+    from.setHours(startH, startM, 0, 0);
+    dateFromInput.value = formatLocalDateTime(from);
+    applyDefaultDateTo();
+    updateDateReadbacks();
+    updateSubmitState();
+  }
+
+  // Recomputes dateTo from dateFrom + HireTrack's DefaultJobPeriod, at
+  // DefaultJobEndTime - matches the "start = date + Default Job Start Time,
+  // end = start + Default Job Period + Default Job End Time" convention
+  // HireTrack NX itself uses when dates aren't given explicitly. Runs every
+  // time dateFrom changes, but backs off the moment the user has actually
+  // typed into dateTo themselves (dateToManuallyEdited).
+  function applyDefaultDateTo() {
+    if (!state.jobDefaults || !dateFromInput.value || dateToManuallyEdited) return;
+    const [endH, endM] = state.jobDefaults.endTime.split(':').map(Number);
+    const from = new Date(dateFromInput.value);
+    if (Number.isNaN(from.getTime())) return;
+    const to = new Date(from.getTime());
+    to.setDate(to.getDate() + state.jobDefaults.periodDays);
+    to.setHours(endH, endM, 0, 0);
+    dateToInput.value = formatLocalDateTime(to);
   }
 
   // ============================================================
@@ -255,11 +304,15 @@
     jobNameInput.value = '';
     dateFromInput.value = '';
     dateToInput.value = '';
+    dateToManuallyEdited = false;
+    applyDefaultDates();
     updateDateReadbacks();
     state.selectedClient = null;
     clientSelectedEl.classList.add('hidden');
     clientSearchInput.value = '';
     clientSearchInput.classList.remove('hidden');
+    contactPersonRowEl.classList.add('hidden');
+    contactPersonSelectEl.innerHTML = '';
   }
 
   // --- Job search + recent jobs (existing-job mode) ---
@@ -662,6 +715,9 @@
     `;
     const input = wrap.querySelector('.tree-add-section-input');
     const btn = wrap.querySelector('.tree-add-section-btn');
+    // Pre-filled so Enter/click alone creates a usable section without
+    // typing anything - still fully editable before submitting.
+    input.value = `Секция ${loadedJob.existingSections.length + 1}`;
 
     const submit = async () => {
       const sectionText = input.value.trim();
@@ -1188,6 +1244,50 @@
     }
   }
 
+  // --- Job defaults (HireTrack's own Jobs>Defaults times/period) + Sales
+  // Person list (once) ---
+  async function loadFormOptions() {
+    try {
+      const res = await fetch('/api/create-job/form-options');
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'Не удалось загрузить настройки формы');
+      state.jobDefaults = data.jobDefaults;
+      state.salesPeople = data.salesPeople || [];
+      salesPersonSelectEl.innerHTML = state.salesPeople
+        .map((u) => `<option value="${u.uid}">${escapeHtml(u.displayName)}</option>`)
+        .join('');
+      applyDefaultDates();
+    } catch (err) {
+      // Non-fatal - date fields just stay empty (manual entry still works),
+      // and the backend's own FALLBACK_USER_ID covers Sales Person if this
+      // select ends up empty.
+    }
+  }
+
+  // Existing Name2 people previously linked to this client Company via any
+  // past job (see listHiretrackClientContacts) - the picker only appears
+  // once a client is selected and only when it actually has candidates, so
+  // a brand-new client with no history doesn't show an empty, confusing
+  // dropdown. No "create a new contact" flow yet - out of scope for this
+  // pass, see EQUIPMENT_CATALOG_MATCH_BLUEPRINT.md.
+  async function loadClientContacts(clientId) {
+    contactPersonSelectEl.innerHTML = '';
+    contactPersonRowEl.classList.add('hidden');
+    try {
+      const res = await fetch(`/api/create-job/contacts?clientId=${encodeURIComponent(clientId)}`);
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'Ошибка загрузки контактов');
+      const contacts = data.contacts || [];
+      if (contacts.length === 0) return;
+      contactPersonSelectEl.innerHTML =
+        '<option value="">— не выбрано —</option>' +
+        contacts.map((c) => `<option value="${c.personId}">${escapeHtml(c.fullName || `#${c.personId}`)}</option>`).join('');
+      contactPersonRowEl.classList.remove('hidden');
+    } catch (err) {
+      // Non-fatal - contact person is optional, the row just stays hidden.
+    }
+  }
+
   // --- Client search (new-job mode) ---
   createSearchDropdown({
     inputEl: clientSearchInput,
@@ -1210,6 +1310,7 @@
     clientSelectedEl.classList.remove('hidden');
     clientSearchInput.value = '';
     clientSearchInput.classList.add('hidden');
+    loadClientContacts(company.companyId);
     updateSubmitState();
   }
 
@@ -1218,6 +1319,8 @@
     clientSelectedEl.classList.add('hidden');
     clientSearchInput.classList.remove('hidden');
     clientSearchInput.focus();
+    contactPersonRowEl.classList.add('hidden');
+    contactPersonSelectEl.innerHTML = '';
     updateSubmitState();
   });
 
@@ -1244,8 +1347,14 @@
 
   jobNameInput.addEventListener('input', updateSubmitState);
   dateFromInput.addEventListener('input', updateSubmitState);
-  dateFromInput.addEventListener('change', updateSubmitState);
-  dateToInput.addEventListener('input', updateSubmitState);
+  dateFromInput.addEventListener('change', () => {
+    applyDefaultDateTo();
+    updateSubmitState();
+  });
+  dateToInput.addEventListener('input', () => {
+    dateToManuallyEdited = true;
+    updateSubmitState();
+  });
   dateToInput.addEventListener('change', updateSubmitState);
 
   submitBtn.addEventListener('click', async () => {
@@ -1259,6 +1368,8 @@
       // though it's discarded (see createHiretrackJobShell) - any already-
       // loaded catalog item works.
       placeholderTypeId: state.catalog[0].typeId,
+      salesPersonId: salesPersonSelectEl.value ? Number(salesPersonSelectEl.value) : undefined,
+      contactPersonId: contactPersonSelectEl.value ? Number(contactPersonSelectEl.value) : undefined,
     };
 
     submitBtn.disabled = true;
@@ -1291,6 +1402,7 @@
 
   updateDateReadbacks();
   loadCatalog();
+  loadFormOptions();
 
   // Deep link / page refresh while a job was loaded (?job=REF) - open it
   // directly instead of dropping back to the blank new-job form. Doesn't

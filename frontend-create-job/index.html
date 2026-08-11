@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Создание работы — HireTrack NX</title>
-  <link rel="stylesheet" href="styles.css?v=12" />
+  <link rel="stylesheet" href="styles.css?v=13" />
 </head>
 <body>
   <header class="topbar">
@@ -45,6 +45,12 @@
         </label>
       </div>
       <p id="date-range-error" class="field-error hidden">Дата окончания должна быть позже даты начала.</p>
+      <div class="field-row">
+        <label class="field">
+          Sales person
+          <select id="sales-person-select"></select>
+        </label>
+      </div>
     </section>
 
     <section class="card" id="new-job-client-card">
@@ -56,6 +62,12 @@
           Выбран клиент: <strong id="client-selected-name"></strong>
           <button type="button" id="client-clear">Изменить</button>
         </div>
+      </div>
+      <div class="field-row hidden" id="contact-person-row">
+        <label class="field">
+          Контактное лицо
+          <select id="contact-person-select"></select>
+        </label>
       </div>
     </section>
 
@@ -84,6 +96,6 @@
     </section>
   </main>
 
-  <script src="app.js?v=19"></script>
+  <script src="app.js?v=20"></script>
 </body>
 </html>

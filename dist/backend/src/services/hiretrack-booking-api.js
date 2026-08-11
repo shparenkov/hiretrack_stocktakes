@@ -28,6 +28,8 @@ const FALLBACK_USER_ID = 1;
 const FALLBACK_WAREHOUSE_ID = 1;
 const FALLBACK_PRICELIST_ID = 6;
 const FALLBACK_TEST_CLIENT_ID = 2;
+// jobtypes.Type_idx for "Аренда" (Rental) - confirmed live 2026-08-11.
+const RENTAL_JOB_TYPE_ID = 2;
 function resolveConfigPath() {
     return path_1.default.resolve(process.cwd(), '..', 'hiretrack.config.json');
 }
@@ -249,6 +251,17 @@ async function createHiretrackJobShell(input) {
     // Same for the Eql_Title "JobName:AutoCode" concatenation - see
     // updateHiretrackEqlistTitle's own comment.
     await updateHiretrackEqlistTitle(init.eqlistId, input.jobName);
+    // api_v2 never sets Jobs.Type/Handler/SalesPerson at all - see
+    // updateHiretrackJobHeader's own comment.
+    await (0, hiretrack_equipment_note_write_1.updateHiretrackJobHeader)({
+        jobId: init.jobId,
+        type: RENTAL_JOB_TYPE_ID,
+        handler: FALLBACK_USER_ID,
+        salesPerson: input.salesPersonId ?? FALLBACK_USER_ID,
+    });
+    if (input.contactPersonId) {
+        await (0, hiretrack_equipment_note_write_1.addHiretrackJobContact)(input.clientId, input.contactPersonId, init.jobId);
+    }
     return { jobId: init.jobId, jobRef: init.jobRef, eqlistId: init.eqlistId, eqRef: init.eqRef };
 }
 // Batches initialise_new_booking (creates the Job+Eqlist shell) +

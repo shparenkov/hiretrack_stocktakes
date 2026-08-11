@@ -1,7 +1,7 @@
 import json
 import os
 import sys
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 import pyodbc
 
@@ -190,6 +190,42 @@ JOB_SEARCH_QUERY = """
     ORDER BY "JobNo" DESC
 """
 
+# HireTrack's own "Jobs > Defaults" settings (NX client, confirmed live
+# 2026-08-11: SiteID 1 has DefaultJobStartTime=14:00:00,
+# DefaultJobEndTime=12:00:00, DefaultJobPeriod=2) - read live rather than
+# hardcoded so an admin's later change in HireTrack NX is picked up without
+# a redeploy. Site 1 matches FALLBACK_WAREHOUSE_ID already used elsewhere in
+# this codebase.
+JOB_DEFAULTS_QUERY = """
+    SELECT "DefaultJobStartTime", "DefaultJobEndTime", "DefaultJobPeriod"
+    FROM "Rules"
+    WHERE "SiteID" = ?
+"""
+
+# Active, non-crew Users - for the Sales Person picker (Handler is
+# auto-set only, no picker yet - see EQUIPMENT_CATALOG_MATCH_BLUEPRINT.md).
+USERS_QUERY = """
+    SELECT "UID", "UserName", "FirstName", "LastName"
+    FROM "Users"
+    WHERE "Active" = TRUE AND "IsCrew" = FALSE
+    ORDER BY "UserName"
+"""
+
+# Existing contacts (Name2 people) previously linked to this client Company
+# via any past job - CONTACTS has no "company's persistent address book"
+# concept of its own, every job gets its own CONTACTS row even when it's
+# really the same real person reused (confirmed live: the same Name2.Person
+# id recurs across many CONTACTS rows with different xLink/job numbers) -
+# so this dedupes by Person, keeping each one's most recent contact details.
+CLIENT_CONTACTS_QUERY = """
+    SELECT C."Person", N."FullName", N."Telephone", N."Mobile", N."EMAIL", MAX(C."ContactsCounter") AS LatestContactId
+    FROM "CONTACTS" C
+    LEFT JOIN "Name2" N ON N."NameCounter" = C."Person"
+    WHERE C."Company" = ?
+    GROUP BY C."Person", N."FullName", N."Telephone", N."Mobile", N."EMAIL"
+    ORDER BY N."FullName"
+"""
+
 # Recently-created jobs, shown as cards on the "open existing job" search
 # page before the user types anything. Jobs.CreatedDate is a real TIMESTAMP
 # (confirmed live via cur.columns()), not a bare-string-bindable value - the
@@ -245,7 +281,10 @@ JOB_LOOKUP_SECTIONS_QUERY = """
 
 
 def serialize(value):
-    if isinstance(value, (datetime, date)):
+    # datetime.time (e.g. Rules.DefaultJobStartTime/EndTime) isn't a date/
+    # datetime subclass - without this branch json.dump chokes on it with
+    # "Object of type time is not JSON serializable".
+    if isinstance(value, (datetime, date, time)):
         return value.isoformat()
     return value
 
@@ -388,6 +427,28 @@ def read_job_recent(cursor, params):
     return rows_as_dicts(cursor)
 
 
+def read_job_defaults(cursor, params):
+    site_id = params.get("siteId") or 1
+    cursor.execute(JOB_DEFAULTS_QUERY, site_id)
+    row = cursor.fetchone()
+    if not row:
+        return None
+    return {"DefaultJobStartTime": row[0], "DefaultJobEndTime": row[1], "DefaultJobPeriod": row[2]}
+
+
+def read_users_list(cursor):
+    cursor.execute(USERS_QUERY)
+    return rows_as_dicts(cursor)
+
+
+def read_client_contacts(cursor, params):
+    client_id = params.get("clientId")
+    if not client_id:
+        raise ValueError("client-contacts requires a 'clientId'")
+    cursor.execute(CLIENT_CONTACTS_QUERY, int(client_id))
+    return rows_as_dicts(cursor)
+
+
 def read_job_lookup(cursor, job_ref):
     if not job_ref or not str(job_ref).strip():
         raise ValueError("job-lookup requires a 'jobRef'")
@@ -437,6 +498,12 @@ def main():
             result = read_job_search(cursor, request.get("query"))
         elif operation == "job-recent":
             result = read_job_recent(cursor, request)
+        elif operation == "job-defaults":
+            result = read_job_defaults(cursor, request)
+        elif operation == "users-list":
+            result = read_users_list(cursor)
+        elif operation == "client-contacts":
+            result = read_client_contacts(cursor, request)
         else:
             raise ValueError(f"Unsupported HireTrack read operation: {operation}")
         json.dump({"ok": True, "result": result}, sys.stdout, ensure_ascii=False)

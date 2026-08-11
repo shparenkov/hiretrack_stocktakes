@@ -2,6 +2,9 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.searchHiretrackJobs = searchHiretrackJobs;
 exports.listRecentHiretrackJobs = listRecentHiretrackJobs;
+exports.getHiretrackJobDefaults = getHiretrackJobDefaults;
+exports.listHiretrackUsers = listHiretrackUsers;
+exports.listHiretrackClientContacts = listHiretrackClientContacts;
 exports.lookupHiretrackJob = lookupHiretrackJob;
 const hiretrack_odbc_read_1 = require("./hiretrack-odbc-read");
 const hiretrack_booking_api_1 = require("./hiretrack-booking-api");
@@ -39,6 +42,47 @@ async function listRecentHiretrackJobs(days = 7) {
         jobTitle: row.Job_Title ?? null,
         clientName: row.Name ?? null,
         createdDate: row.CreatedDate,
+    }));
+}
+// HireTrack NX's own "Jobs > Defaults" settings (Rules table) - read live
+// (not hardcoded) so an admin's later change in HireTrack NX is picked up
+// without a redeploy. Falls back to the confirmed-live production values
+// (14:00/12:00/2 days) only if the Rules row is somehow missing, so the
+// create-job form still has sane defaults rather than breaking.
+async function getHiretrackJobDefaults() {
+    const raw = await (0, hiretrack_odbc_read_1.runHiretrackOdbcRead)({
+        operation: 'job-defaults',
+        siteId: 1,
+    });
+    return {
+        startTime: raw?.DefaultJobStartTime ?? '14:00:00',
+        endTime: raw?.DefaultJobEndTime ?? '12:00:00',
+        periodDays: raw?.DefaultJobPeriod ?? 2,
+    };
+}
+// Active, non-crew Users - for the Sales Person picker.
+async function listHiretrackUsers() {
+    const rows = await (0, hiretrack_odbc_read_1.runHiretrackOdbcRead)({ operation: 'users-list' });
+    return rows.map((row) => {
+        const fullName = [row.FirstName, row.LastName].filter(Boolean).join(' ').trim();
+        return { uid: row.UID, userName: row.UserName, displayName: fullName || row.UserName };
+    });
+}
+// People (Name2 rows) previously linked to this client Company via any past
+// job's CONTACTS row - CONTACTS has no standalone "company address book",
+// every job gets its own row even when it's really the same real person
+// reused (confirmed live), so this dedupes by Person.
+async function listHiretrackClientContacts(clientId) {
+    const rows = await (0, hiretrack_odbc_read_1.runHiretrackOdbcRead)({
+        operation: 'client-contacts',
+        clientId,
+    });
+    return rows.map((row) => ({
+        personId: row.Person,
+        fullName: row.FullName ?? null,
+        telephone: row.Telephone ?? null,
+        mobile: row.Mobile ?? null,
+        email: row.EMAIL ?? null,
     }));
 }
 // Drops any fractional-second component and normalizes to a bare space

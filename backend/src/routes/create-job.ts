@@ -2,7 +2,14 @@ import { Request, Response, Router } from 'express';
 import { z } from 'zod';
 import { getEquipmentCatalog } from '../services/hiretrack-equipment-catalog';
 import { searchHiretrackCompanies } from '../services/hiretrack-company-search';
-import { lookupHiretrackJob, searchHiretrackJobs, listRecentHiretrackJobs } from '../services/hiretrack-job-lookup';
+import {
+  lookupHiretrackJob,
+  searchHiretrackJobs,
+  listRecentHiretrackJobs,
+  getHiretrackJobDefaults,
+  listHiretrackUsers,
+  listHiretrackClientContacts,
+} from '../services/hiretrack-job-lookup';
 import {
   checkHiretrackAvailability,
   createHiretrackBooking,
@@ -102,6 +109,38 @@ const createJobShellSchema = z.object({
   dateFrom: z.string().min(1),
   dateTo: z.string().min(1),
   placeholderTypeId: z.coerce.number().int().positive(),
+  salesPersonId: z.coerce.number().int().positive().optional(),
+  contactPersonId: z.coerce.number().int().positive().optional(),
+});
+
+// Job-defaults (HireTrack's own Jobs>Defaults time/period settings) + the
+// Sales Person picker's user list - fetched together since both are needed
+// before the new-job form can render its full set of defaults/pickers.
+createJobRouter.get('/form-options', async (_req: Request, res: Response) => {
+  try {
+    const [jobDefaults, salesPeople] = await Promise.all([getHiretrackJobDefaults(), listHiretrackUsers()]);
+    res.json({ ok: true, jobDefaults, salesPeople });
+  } catch (error) {
+    res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+const clientContactsSchema = z.object({
+  clientId: z.coerce.number().int().positive(),
+});
+
+createJobRouter.get('/contacts', async (req: Request, res: Response) => {
+  const parsed = clientContactsSchema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ ok: false, error: 'Validation failed', issues: parsed.error.flatten() });
+    return;
+  }
+  try {
+    const contacts = await listHiretrackClientContacts(parsed.data.clientId);
+    res.json({ ok: true, contacts });
+  } catch (error) {
+    res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
 });
 
 createJobRouter.post('/jobs', async (req: Request, res: Response) => {

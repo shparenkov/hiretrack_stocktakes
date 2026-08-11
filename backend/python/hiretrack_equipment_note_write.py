@@ -151,6 +151,61 @@ def update_eqlist_title(cursor, params):
     return {"eqlistId": eqlist_id, "title": title[:50]}
 
 
+def update_job_header(cursor, params):
+    # api_v2's initialise_new_booking never sets Jobs.Type/Handler/SalesPerson
+    # at all (confirmed by reading its params - only job_name reaches Jobs,
+    # via CreateNewEqlist's own Job_Title lookup) - every job created through
+    # /create-job/ was left with these NULL. All three are plain Jobs columns
+    # (Type -> jobtypes.Type_idx, Handler/SalesPerson -> Users.UID per
+    # db.sql's FK constraints), no stored-function/pricing entanglement like
+    # Eqlists has, so a direct UPDATE is safe. Only sets the fields actually
+    # passed, so callers can set just one without clobbering the others.
+    job_id = params.get("jobId")
+    if job_id is None:
+        raise ValueError("update-job-header requires 'jobId'")
+
+    fields = []
+    values = []
+    if "type" in params and params["type"] is not None:
+        fields.append('"Type" = ?')
+        values.append(int(params["type"]))
+    if "handler" in params and params["handler"] is not None:
+        fields.append('"Handler" = ?')
+        values.append(int(params["handler"]))
+    if "salesPerson" in params and params["salesPerson"] is not None:
+        fields.append('"SalesPerson" = ?')
+        values.append(int(params["salesPerson"]))
+    if not fields:
+        raise ValueError("update-job-header requires at least one of 'type', 'handler', 'salesPerson'")
+
+    values.append(int(job_id))
+    cursor.execute(f'UPDATE "Jobs" SET {", ".join(fields)} WHERE "JobNo" = ?', *values)
+    return {"jobId": job_id}
+
+
+def add_job_contact(cursor, params):
+    # CONTACTS has no "company's persistent address book" concept - HireTrack
+    # NX itself creates a fresh CONTACTS row per job even when it's really the
+    # same real Name2 person being reused (confirmed live: the same Person id
+    # recurs across many CONTACTS rows with different xLink/job numbers) - so
+    # this mirrors that convention rather than trying to dedupe/update an
+    # existing row. RecordType 'ctJobs' + xLink=JobNo matches every existing
+    # job-linked CONTACTS row observed live; MainContact=TRUE since this is
+    # v1's only contact-picker slot (no UI yet for a job having more than one).
+    company_id = params.get("companyId")
+    person_id = params.get("personId")
+    job_id = params.get("jobId")
+    if company_id is None or person_id is None or job_id is None:
+        raise ValueError("add-job-contact requires 'companyId', 'personId' and 'jobId'")
+
+    cursor.execute(
+        'INSERT INTO "CONTACTS" ("Company", "Person", "xLink", "RecordType", "MainContact") '
+        "VALUES (?, ?, ?, 'ctJobs', TRUE)",
+        int(company_id), int(person_id), int(job_id),
+    )
+    return {"companyId": company_id, "personId": person_id, "jobId": job_id}
+
+
 def rename_section(cursor, params):
     section_id = params.get("sectionId")
     section_text = params.get("sectionText")
@@ -296,6 +351,10 @@ def main():
             result = set_line_section(cursor, request)
         elif operation == "force-line-quantity":
             result = force_line_quantity(cursor, request)
+        elif operation == "update-job-header":
+            result = update_job_header(cursor, request)
+        elif operation == "add-job-contact":
+            result = add_job_contact(cursor, request)
         else:
             raise ValueError(f"Unsupported HireTrack write operation: {operation}")
         json.dump({"ok": True, "result": result}, sys.stdout, ensure_ascii=False)

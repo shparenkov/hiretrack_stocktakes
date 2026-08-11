@@ -89,6 +89,37 @@ const createJobShellSchema = zod_1.z.object({
     dateFrom: zod_1.z.string().min(1),
     dateTo: zod_1.z.string().min(1),
     placeholderTypeId: zod_1.z.coerce.number().int().positive(),
+    salesPersonId: zod_1.z.coerce.number().int().positive().optional(),
+    contactPersonId: zod_1.z.coerce.number().int().positive().optional(),
+});
+// Job-defaults (HireTrack's own Jobs>Defaults time/period settings) + the
+// Sales Person picker's user list - fetched together since both are needed
+// before the new-job form can render its full set of defaults/pickers.
+exports.createJobRouter.get('/form-options', async (_req, res) => {
+    try {
+        const [jobDefaults, salesPeople] = await Promise.all([(0, hiretrack_job_lookup_1.getHiretrackJobDefaults)(), (0, hiretrack_job_lookup_1.listHiretrackUsers)()]);
+        res.json({ ok: true, jobDefaults, salesPeople });
+    }
+    catch (error) {
+        res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+});
+const clientContactsSchema = zod_1.z.object({
+    clientId: zod_1.z.coerce.number().int().positive(),
+});
+exports.createJobRouter.get('/contacts', async (req, res) => {
+    const parsed = clientContactsSchema.safeParse(req.query);
+    if (!parsed.success) {
+        res.status(400).json({ ok: false, error: 'Validation failed', issues: parsed.error.flatten() });
+        return;
+    }
+    try {
+        const contacts = await (0, hiretrack_job_lookup_1.listHiretrackClientContacts)(parsed.data.clientId);
+        res.json({ ok: true, contacts });
+    }
+    catch (error) {
+        res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
 });
 exports.createJobRouter.post('/jobs', async (req, res) => {
     const parsed = createJobShellSchema.safeParse(req.body);

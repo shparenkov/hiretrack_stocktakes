@@ -72,14 +72,17 @@ main {
   min-width: 220px;
 }
 
-.field input {
+.field input,
+.field select {
   font: 14px Arial, sans-serif;
   padding: 8px 10px;
   border: 1px solid var(--line);
   color: #18212b;
+  background: #fff;
 }
 
-.field input:focus { outline: 2px solid var(--blue); outline-offset: -1px; }
+.field input:focus,
+.field select:focus { outline: 2px solid var(--blue); outline-offset: -1px; }
 
 .date-readback {
   font-weight: 700;
