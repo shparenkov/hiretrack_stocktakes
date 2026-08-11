@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Создание работы — HireTrack NX</title>
-  <link rel="stylesheet" href="styles.css?v=13" />
+  <link rel="stylesheet" href="styles.css?v=14" />
 </head>
 <body>
   <header class="topbar">
@@ -90,12 +90,18 @@
           <label for="job-eqlist-select">Список оборудования (Eqlist):</label>
           <select id="job-eqlist-select"></select>
         </div>
-        <p class="job-loaded-dates">Даты работы: <strong id="job-loaded-dates"></strong> <span class="hint">(фиксированы — совпадают с уже существующими позициями)</span></p>
+        <div id="eqlist-actions"></div>
+        <p class="job-loaded-dates">
+          Даты списка: <strong id="job-loaded-dates"></strong>
+          <button type="button" id="job-dates-edit-btn" class="icon-btn" title="Изменить даты списка" aria-label="Изменить даты списка">✎</button>
+          <span class="hint">(должны совпадать с уже существующими позициями)</span>
+        </p>
+        <div id="job-dates-edit-form" class="job-dates-edit-form hidden"></div>
         <div id="existing-lines-tree" class="lines-tree"></div>
       </div>
     </section>
   </main>
 
-  <script src="app.js?v=20"></script>
+  <script src="app.js?v=21"></script>
 </body>
 </html>

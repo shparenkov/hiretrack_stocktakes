@@ -104,6 +104,53 @@ def add_note_line(cursor, params):
     return {"noteId": note_id, "eqtype": eqtype, "qty": qty, "priceEach": price_each}
 
 
+def create_eqlist(cursor, params):
+    # CreateNewEqlist (db.sql:9015) is the same stored function api_v2's
+    # initialise_new_booking calls internally to create a job's first
+    # Eqlist - called directly here to add a FURTHER Eqlist to an
+    # ALREADY-EXISTING job, since api_v2 has no action for that at all
+    # (initialise_new_booking only ever creates a brand-new Job).
+    #
+    # Its LASTAUTOINC can't be trusted the way every other CreateNew*-style
+    # write in this bridge relies on it (CreateNewNote, EqSections inserts):
+    # confirmed live that reading LASTAUTOINC right after the {CALL ...}
+    # returns an unrelated value (429551 - no such Eql_no ever existed) -
+    # the function does several of its OWN internal autoinc-generating
+    # inserts (via its own aiEqlist helper table, GetNewEqlistRef, etc.)
+    # before it returns, so by the time control comes back here the
+    # connection's LASTAUTOINC reflects whichever of those ran last, not the
+    # actual new Eql_no. Found by querying instead: the real new row shows up
+    # immediately via "most recently created Eqlist for this Job".
+    #
+    # Params to CreateNewEqlist: aJobNo, aStartDate, aEndDate, aStatus (1 -
+    # matches Rules.DefaultEqlistStatus and real Eqlists' own Defcon,
+    # confirmed live; the function's own "-1 for real jobs" comment turned
+    # out to store literally -1, not resolve to any real default), aListType
+    # (0 = waHires, a plain rental list), aSourceWarehouse (0 - resolves to
+    # the site's own default per the function's own comment), aDestWarehouse/
+    # aBorrowingList (0 - unused for a plain hire), aEqlistClass (0 =
+    # emRentalClass).
+    job_id = params.get("jobId")
+    date_from = params.get("dateFrom")
+    date_to = params.get("dateTo")
+    if job_id is None or not date_from or not date_to:
+        raise ValueError("create-eqlist requires 'jobId', 'dateFrom' and 'dateTo'")
+
+    cursor.execute(
+        "{CALL CreateNewEqlist(?, ?, ?, ?, ?, ?, ?, ?, ?)}",
+        job_id, datetime.fromisoformat(str(date_from)), datetime.fromisoformat(str(date_to)),
+        1, 0, 0, 0, 0, 0,
+    )
+    cursor.execute(
+        'SELECT TOP 1 "Eql_no" FROM "Eqlists" WHERE "Job_no" = ? ORDER BY "CreatedDate" DESC',
+        job_id,
+    )
+    row = cursor.fetchone()
+    if not row:
+        raise ValueError("CreateNewEqlist did not produce a new Eqlists row")
+    return {"eqlistId": int(row[0]), "jobId": job_id}
+
+
 def update_eqlist_dates(cursor, params):
     # Corrects a confirmed api_v2 bug: initialise_new_booking's
     # availability_datetime_from/to never reach CreateNewEqlist's
@@ -337,6 +384,8 @@ def main():
             result = create_note(cursor, request)
         elif operation == "add-note-line":
             result = add_note_line(cursor, request)
+        elif operation == "create-eqlist":
+            result = create_eqlist(cursor, request)
         elif operation == "update-eqlist-dates":
             result = update_eqlist_dates(cursor, request)
         elif operation == "update-eqlist-title":

@@ -40,6 +40,9 @@
   const jobLoadedDatesEl = document.getElementById('job-loaded-dates');
   const jobEqlistPickerEl = document.getElementById('job-eqlist-picker');
   const jobEqlistSelectEl = document.getElementById('job-eqlist-select');
+  const eqlistActionsEl = document.getElementById('eqlist-actions');
+  const jobDatesEditBtnEl = document.getElementById('job-dates-edit-btn');
+  const jobDatesEditFormEl = document.getElementById('job-dates-edit-form');
   const existingLinesTreeEl = document.getElementById('existing-lines-tree');
 
   const jobNameInput = document.getElementById('job-name');
@@ -129,6 +132,13 @@
   function formatLocalDateTime(date) {
     const pad = (n) => String(n).padStart(2, '0');
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  }
+
+  // "YYYY-MM-DD HH:MM:SS" (HireTrack's own wire format) -> "YYYY-MM-DDTHH:MM"
+  // (what a <input type="datetime-local"> needs as its value).
+  function toDatetimeLocalValue(hiretrackDateTime) {
+    if (!hiretrackDateTime) return '';
+    return hiretrackDateTime.replace(' ', 'T').slice(0, 16);
   }
 
   // Pre-fills dateFromInput with "today at HireTrack's DefaultJobStartTime"
@@ -1154,6 +1164,11 @@
       dateTo: eqlist.dateBack,
       existingSections: eqlist.sections || [],
       existingLines: eqlist.lines || [],
+      // Jobs."Due Out"/"Due Back" - the job-level date range, distinct from
+      // this (or any) Eqlist's own dates - see EQUIPMENT_CATALOG_MATCH_BLUEPRINT.md.
+      // Used only as the default when creating a further Eqlist on this job.
+      jobDueOut: job.dueOut ?? null,
+      jobDueBack: job.dueBack ?? null,
     };
     // A different Eqlist almost always means a different date range, so a
     // cached availability figure from the previously-shown list would be
@@ -1162,6 +1177,13 @@
 
     jobLoadedClientEl.textContent = eqlist.clientName || `#${eqlist.clientId}`;
     jobLoadedDatesEl.textContent = `${READBACK_FORMATTER.format(new Date(eqlist.dateOut.replace(' ', 'T')))} — ${READBACK_FORMATTER.format(new Date(eqlist.dateBack.replace(' ', 'T')))}`;
+    // Editing header dates on a populated Eqlist isn't safe yet - existing
+    // lines' own Sort.D1/D2 wouldn't be updated to match, and any future
+    // append would then fail HireTrack's exact-date match. Skeleton only
+    // works for a still-empty list for now - see the button's title.
+    jobDatesEditBtnEl.disabled = state.loadedJob.existingLines.length > 0;
+    jobDatesEditFormEl.classList.add('hidden');
+    jobDatesEditFormEl.innerHTML = '';
     renderExistingLinesTree(state.loadedJob);
   }
 
@@ -1176,7 +1198,146 @@
     if (!state.loadedJob) return;
     const selected = state.loadedJobEqlists.find((eqlist) => String(eqlist.eqlistId) === jobEqlistSelectEl.value);
     if (!selected) return;
-    applyEqlist({ jobRef: state.loadedJob.jobRef, jobNo: state.loadedJob.jobNo }, selected);
+    applyEqlist(
+      { jobRef: state.loadedJob.jobRef, jobNo: state.loadedJob.jobNo, dueOut: state.loadedJob.jobDueOut, dueBack: state.loadedJob.jobDueBack },
+      selected,
+    );
+  });
+
+  // "+ Добавить список" - adds a FURTHER Eqlist to the loaded job (distinct
+  // from creating the job itself). Dates default to the job's own "Due Out"/
+  // "Due Back" (per explicit user request: a new list should start out
+  // repeating the project's dates), falling back to the currently-shown
+  // Eqlist's own dates if the job has none - but both remain fully editable
+  // right here before submitting, since a list's real dates can genuinely
+  // differ from the project's (see EQUIPMENT_CATALOG_MATCH_BLUEPRINT.md).
+  function renderAddEqlistControl(loadedJob) {
+    eqlistActionsEl.innerHTML = '<button type="button" class="add-eqlist-toggle">+ Добавить список</button>';
+    const toggleBtn = eqlistActionsEl.querySelector('.add-eqlist-toggle');
+    toggleBtn.addEventListener('click', () => {
+      const defaultFrom = toDatetimeLocalValue(loadedJob.jobDueOut || loadedJob.dateFrom);
+      const defaultTo = toDatetimeLocalValue(loadedJob.jobDueBack || loadedJob.dateTo);
+      eqlistActionsEl.innerHTML = `
+        <div class="add-eqlist-form">
+          <input type="text" class="add-eqlist-title" placeholder="Название списка…" maxlength="50">
+          <input type="datetime-local" class="add-eqlist-date-from" value="${defaultFrom}">
+          <input type="datetime-local" class="add-eqlist-date-to" value="${defaultTo}">
+          <button type="button" class="add-eqlist-submit">Создать</button>
+          <button type="button" class="cancel-btn add-eqlist-cancel">Отмена</button>
+        </div>
+      `;
+      const titleInput = eqlistActionsEl.querySelector('.add-eqlist-title');
+      const fromInput = eqlistActionsEl.querySelector('.add-eqlist-date-from');
+      const toInput = eqlistActionsEl.querySelector('.add-eqlist-date-to');
+      const submitBtn = eqlistActionsEl.querySelector('.add-eqlist-submit');
+      const cancelBtn = eqlistActionsEl.querySelector('.add-eqlist-cancel');
+      titleInput.focus();
+
+      cancelBtn.addEventListener('click', () => renderAddEqlistControl(loadedJob));
+
+      submitBtn.addEventListener('click', async () => {
+        const title = titleInput.value.trim();
+        const dateFrom = toHiretrackDateTime(fromInput.value);
+        const dateTo = toHiretrackDateTime(toInput.value);
+        if (!title) {
+          titleInput.focus();
+          return;
+        }
+        if (!dateFrom || !dateTo || dateFrom >= dateTo) {
+          jobRefStatusEl.textContent = 'Проверьте название и даты нового списка.';
+          return;
+        }
+        submitBtn.disabled = true;
+        jobRefStatusEl.textContent = 'Создаём список…';
+        try {
+          const res = await fetch(`/api/create-job/jobs/${encodeURIComponent(loadedJob.jobRef)}/eqlists`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ jobId: loadedJob.jobNo, title, dateFrom, dateTo }),
+          });
+          const data = await res.json();
+          if (!data.ok) throw new Error(data.error || 'Не удалось создать список');
+          jobRefStatusEl.textContent = '';
+          await openExistingJob(loadedJob.jobRef, { pushHistory: false });
+          jobEqlistSelectEl.value = String(data.eqlistId);
+          jobEqlistSelectEl.dispatchEvent(new Event('change'));
+        } catch (err) {
+          jobRefStatusEl.textContent = `Ошибка создания списка: ${err.message}`;
+          submitBtn.disabled = false;
+        }
+      });
+    });
+  }
+
+  // Skeleton for editing the currently-shown Eqlist's own dates (see
+  // applyEqlist's comment on why this stays disabled once the list has
+  // real lines). Same commit-via-fetch shape as renameHiretrackSection's
+  // pencil-icon UX, just with two fields instead of one.
+  jobDatesEditBtnEl.addEventListener('click', () => {
+    if (!state.loadedJob) return;
+    const loadedJob = state.loadedJob;
+    jobDatesEditFormEl.innerHTML = `
+      <input type="datetime-local" class="job-dates-edit-from" value="${toDatetimeLocalValue(loadedJob.dateFrom)}">
+      <input type="datetime-local" class="job-dates-edit-to" value="${toDatetimeLocalValue(loadedJob.dateTo)}">
+      <button type="button" class="job-dates-edit-submit">Сохранить</button>
+      <button type="button" class="cancel-btn job-dates-edit-cancel">Отмена</button>
+    `;
+    jobDatesEditFormEl.classList.remove('hidden');
+    const fromInput = jobDatesEditFormEl.querySelector('.job-dates-edit-from');
+    const toInput = jobDatesEditFormEl.querySelector('.job-dates-edit-to');
+    const submitBtn = jobDatesEditFormEl.querySelector('.job-dates-edit-submit');
+    const cancelBtn = jobDatesEditFormEl.querySelector('.job-dates-edit-cancel');
+
+    const close = () => {
+      jobDatesEditFormEl.classList.add('hidden');
+      jobDatesEditFormEl.innerHTML = '';
+    };
+    cancelBtn.addEventListener('click', close);
+
+    submitBtn.addEventListener('click', async () => {
+      const dateFrom = toHiretrackDateTime(fromInput.value);
+      const dateTo = toHiretrackDateTime(toInput.value);
+      if (!dateFrom || !dateTo || dateFrom >= dateTo) {
+        jobRefStatusEl.textContent = 'Дата окончания должна быть позже даты начала.';
+        return;
+      }
+      submitBtn.disabled = true;
+      jobRefStatusEl.textContent = 'Сохраняем даты списка…';
+      try {
+        const res = await fetch(
+          `/api/create-job/jobs/${encodeURIComponent(loadedJob.jobRef)}/eqlists/${loadedJob.eqlistId}/dates`,
+          {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dateFrom, dateTo }),
+          },
+        );
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || 'Не удалось изменить даты списка');
+        jobRefStatusEl.textContent = '';
+        loadedJob.dateFrom = dateFrom;
+        loadedJob.dateTo = dateTo;
+        jobLoadedDatesEl.textContent = `${READBACK_FORMATTER.format(new Date(dateFrom.replace(' ', 'T')))} — ${READBACK_FORMATTER.format(new Date(dateTo.replace(' ', 'T')))}`;
+        // Also update the cached eqlist list (and its <option>, if the
+        // picker is showing) - otherwise switching to a different Eqlist
+        // and back without a full reload would revert this one to its
+        // stale pre-edit dates.
+        const cachedEqlist = state.loadedJobEqlists.find((e) => e.eqlistId === loadedJob.eqlistId);
+        if (cachedEqlist) {
+          cachedEqlist.dateOut = dateFrom;
+          cachedEqlist.dateBack = dateTo;
+          const option = jobEqlistSelectEl.querySelector(`option[value="${loadedJob.eqlistId}"]`);
+          if (option) option.textContent = eqlistOptionLabel(cachedEqlist);
+        }
+        // Dates just changed - any cached availability was computed for the
+        // old range.
+        state.availabilityCache = new Map();
+        close();
+      } catch (err) {
+        jobRefStatusEl.textContent = `Ошибка изменения дат: ${err.message}`;
+        submitBtn.disabled = false;
+      }
+    });
   });
 
   async function openExistingJob(jobRef, { pushHistory = true } = {}) {
@@ -1212,6 +1373,7 @@
       }
 
       applyEqlist(job, eqlists[0]);
+      renderAddEqlistControl(state.loadedJob);
       jobLoadedInfoEl.classList.remove('hidden');
       if (pushHistory) pushJobHistory(job.jobRef);
     } catch (err) {

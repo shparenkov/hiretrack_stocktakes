@@ -246,7 +246,7 @@ JOB_RECENT_QUERY = """
 # don't fold Cyrillic case, confirmed live, and Job_Ref is always copy-pasted
 # verbatim from HireTrack NX's own display anyway (fixed case as generated).
 JOB_LOOKUP_QUERY = """
-    SELECT "JobNo", "Job_Ref", "Name"
+    SELECT "JobNo", "Job_Ref", "Name", "Due Out", "Due Back"
     FROM "Jobs"
     WHERE "Job_Ref" = ?
 """
@@ -459,7 +459,21 @@ def read_job_lookup(cursor, job_ref):
         return None
 
     job_no = job_row[0]
-    job = {"jobNo": job_no, "jobRef": job_row[1], "name": job_row[2]}
+    job = {
+        "jobNo": job_no,
+        "jobRef": job_row[1],
+        "name": job_row[2],
+        # Jobs."Due Out"/"Due Back" - a job-level date range distinct from
+        # (and not kept in sync with) any individual Eqlist's own DateOut/
+        # DateBack. Confirmed live: CreateNewEqlist copies the FIRST Eqlist's
+        # dates onto these when a job is first created, but never touches
+        # them again for later Eqlists (a 27-Eqlist real job's Due Back still
+        # matched only its first Eqlist's end date, weeks before the actual
+        # last one). Used as the sensible starting point when creating a
+        # further Eqlist on this job - see EQUIPMENT_CATALOG_MATCH_BLUEPRINT.md.
+        "dueOut": serialize(job_row[3]),
+        "dueBack": serialize(job_row[4]),
+    }
 
     cursor.execute(JOB_LOOKUP_EQLISTS_QUERY, job_no)
     eqlists = rows_as_dicts(cursor)

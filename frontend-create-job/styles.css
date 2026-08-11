@@ -199,6 +199,56 @@ main {
 .eqlist-picker label { color: var(--muted); }
 .eqlist-picker select { font: inherit; padding: 4px 6px; border: 1px solid var(--line); border-radius: 4px; max-width: 360px; }
 
+/* "+ Добавить список" (add a further Eqlist to the loaded job) - same
+   persistent-inline-form style as .tree-add-section, since it's the same
+   kind of "type into a couple of fields, click one button" action. */
+.eqlist-actions { margin: 0 0 8px; }
+.add-eqlist-toggle {
+  border: 1px solid var(--line);
+  background: #fff;
+  padding: 6px 10px;
+  cursor: pointer;
+  font: 600 12px Arial, sans-serif;
+  color: var(--navy);
+}
+.add-eqlist-toggle:hover { background: var(--canvas); }
+.add-eqlist-form {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: var(--canvas);
+}
+.add-eqlist-form input[type="text"] { flex: 1; min-width: 160px; padding: 6px 8px; border: 1px solid var(--line); font: 13px Arial, sans-serif; }
+.add-eqlist-form input[type="datetime-local"] { padding: 5px 6px; border: 1px solid var(--line); font: 13px Arial, sans-serif; }
+.add-eqlist-form button { border: 1px solid var(--line); background: #fff; padding: 6px 10px; cursor: pointer; font: 600 12px Arial, sans-serif; white-space: nowrap; }
+.add-eqlist-form button:hover { background: #fff; opacity: .8; }
+.add-eqlist-form .cancel-btn { color: var(--muted); }
+
+/* Pencil-to-edit-dates skeleton (see EQUIPMENT_CATALOG_MATCH_BLUEPRINT.md) -
+   disabled with a title tooltip once the Eqlist has real lines, since
+   changing header dates on a populated list isn't safe yet (existing
+   lines' own Sort.D1/D2 aren't updated to match). */
+.icon-btn { border: none; background: none; cursor: pointer; padding: 2px 4px; color: var(--muted); font-size: 13px; line-height: 1; }
+.icon-btn:hover { opacity: .7; }
+.icon-btn:disabled { opacity: .35; cursor: default; }
+.job-dates-edit-form {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: -4px 0 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: var(--canvas);
+}
+.job-dates-edit-form input[type="datetime-local"] { padding: 5px 6px; border: 1px solid var(--line); font: 13px Arial, sans-serif; }
+.job-dates-edit-form button { border: 1px solid var(--line); background: #fff; padding: 6px 10px; cursor: pointer; font: 600 12px Arial, sans-serif; white-space: nowrap; }
+.job-dates-edit-form .cancel-btn { color: var(--muted); }
+
 /* Nested Sections -> lines -> (Composite/Alias) components tree */
 .lines-tree { margin-top: 10px; border: 1px solid var(--line); }
 

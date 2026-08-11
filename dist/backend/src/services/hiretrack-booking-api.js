@@ -7,6 +7,7 @@ exports.checkHiretrackAvailability = checkHiretrackAvailability;
 exports.initialiseHiretrackBooking = initialiseHiretrackBooking;
 exports.updateHiretrackEqlistDates = updateHiretrackEqlistDates;
 exports.updateHiretrackEqlistTitle = updateHiretrackEqlistTitle;
+exports.createHiretrackEqlist = createHiretrackEqlist;
 exports.createHiretrackJobShell = createHiretrackJobShell;
 exports.createHiretrackBooking = createHiretrackBooking;
 exports.appendLinesToExistingBooking = appendLinesToExistingBooking;
@@ -223,6 +224,25 @@ async function updateHiretrackEqlistTitle(eqlistId, title) {
         eqlistId,
         title,
     });
+}
+// CreateNewEqlist (db.sql:9015) directly - adds a FURTHER Eqlist to an
+// ALREADY-EXISTING job. api_v2 has no action for this at all
+// (initialise_new_booking only ever creates a brand-new Job). Real
+// production jobs commonly carry many Eqlists with their own distinct date
+// ranges (one confirmed job has 27, one per act on a multi-day booking), so
+// this is a genuinely separate operation from creating the job itself, not
+// a variant of it. Also applies the same Eql_Title cleanup as the job's own
+// first Eqlist - see updateHiretrackEqlistTitle's comment - since
+// CreateNewEqlist produces the same "Title:AutoCode" concatenation here too.
+async function createHiretrackEqlist(jobId, title, dateFrom, dateTo) {
+    const { eqlistId } = await (0, hiretrack_odbc_write_1.runHiretrackOdbcWrite)({
+        operation: 'create-eqlist',
+        jobId,
+        dateFrom,
+        dateTo,
+    });
+    await updateHiretrackEqlistTitle(eqlistId, title);
+    return { eqlistId, jobId };
 }
 // Creates an empty Job+Eqlist shell with no real equipment lines - for the
 // "just create the job header, then add equipment through the same

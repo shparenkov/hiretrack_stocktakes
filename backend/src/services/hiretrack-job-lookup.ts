@@ -52,6 +52,11 @@ export interface HiretrackJobLookupResult {
   jobNo: number;
   jobRef: string;
   name: string | null;
+  // Jobs."Due Out"/"Due Back" - a job-level date range distinct from any
+  // individual Eqlist's own dates (see the Python read query's comment).
+  // Used as the default when creating a further Eqlist on this job.
+  dueOut: string | null;
+  dueBack: string | null;
   eqlists: HiretrackJobLookupEqlist[];
 }
 
@@ -85,6 +90,8 @@ interface RawJobLookupResult {
   jobNo: number;
   jobRef: string;
   name: string | null;
+  dueOut: string | null;
+  dueBack: string | null;
   eqlists: RawEqlistRow[];
 }
 
@@ -314,6 +321,8 @@ export async function lookupHiretrackJob(jobRef: string): Promise<HiretrackJobLo
     jobNo: raw.jobNo,
     jobRef: raw.jobRef,
     name: raw.name ?? null,
+    dueOut: raw.dueOut ? normalizeHiretrackDateTime(raw.dueOut) : null,
+    dueBack: raw.dueBack ? normalizeHiretrackDateTime(raw.dueBack) : null,
     eqlists,
   };
 }

@@ -17,6 +17,8 @@ import {
   appendLinesToExistingBooking,
   changeHiretrackBookingQuantity,
   removeFromHiretrackBooking,
+  createHiretrackEqlist,
+  updateHiretrackEqlistDates,
 } from '../services/hiretrack-booking-api';
 import {
   renameHiretrackSection,
@@ -175,6 +177,53 @@ createJobRouter.get('/jobs/:jobRef', async (req: Request, res: Response) => {
       return;
     }
     res.json({ ok: true, job });
+  } catch (error) {
+    res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// Adds a FURTHER Eqlist to an already-existing job - distinct from POST
+// /jobs, which creates the job itself. See createHiretrackEqlist's own
+// comment for why api_v2 has no action for this at all.
+const createEqlistSchema = z.object({
+  jobId: z.coerce.number().int().positive(),
+  title: z.string().trim().min(1).max(50),
+  dateFrom: z.string().min(1),
+  dateTo: z.string().min(1),
+});
+
+createJobRouter.post('/jobs/:jobRef/eqlists', async (req: Request, res: Response) => {
+  const parsed = createEqlistSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ ok: false, error: 'Validation failed', issues: parsed.error.flatten() });
+    return;
+  }
+  try {
+    const result = await createHiretrackEqlist(parsed.data.jobId, parsed.data.title, parsed.data.dateFrom, parsed.data.dateTo);
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// Skeleton for editing an Eqlist's own date range after creation - each
+// Eqlist on a job can genuinely run on different dates from the job's own
+// (or another Eqlist's) range, see EQUIPMENT_CATALOG_MATCH_BLUEPRINT.md.
+const updateEqlistDatesSchema = z.object({
+  dateFrom: z.string().min(1),
+  dateTo: z.string().min(1),
+});
+
+createJobRouter.put('/jobs/:jobRef/eqlists/:eqlistId/dates', async (req: Request, res: Response) => {
+  const parsed = updateEqlistDatesSchema.safeParse(req.body);
+  const eqlistId = Number(req.params.eqlistId);
+  if (!parsed.success || !Number.isInteger(eqlistId) || eqlistId <= 0) {
+    res.status(400).json({ ok: false, error: 'Validation failed', issues: parsed.success ? undefined : parsed.error.flatten() });
+    return;
+  }
+  try {
+    await updateHiretrackEqlistDates(eqlistId, parsed.data.dateFrom, parsed.data.dateTo);
+    res.json({ ok: true, eqlistId, dateFrom: parsed.data.dateFrom, dateTo: parsed.data.dateTo });
   } catch (error) {
     res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
   }

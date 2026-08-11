@@ -148,6 +148,8 @@ async function lookupHiretrackJob(jobRef) {
         jobNo: raw.jobNo,
         jobRef: raw.jobRef,
         name: raw.name ?? null,
+        dueOut: raw.dueOut ? normalizeHiretrackDateTime(raw.dueOut) : null,
+        dueBack: raw.dueBack ? normalizeHiretrackDateTime(raw.dueBack) : null,
         eqlists,
     };
 }

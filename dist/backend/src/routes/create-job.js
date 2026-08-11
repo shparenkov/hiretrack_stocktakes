@@ -158,6 +158,51 @@ exports.createJobRouter.get('/jobs/:jobRef', async (req, res) => {
         res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
     }
 });
+// Adds a FURTHER Eqlist to an already-existing job - distinct from POST
+// /jobs, which creates the job itself. See createHiretrackEqlist's own
+// comment for why api_v2 has no action for this at all.
+const createEqlistSchema = zod_1.z.object({
+    jobId: zod_1.z.coerce.number().int().positive(),
+    title: zod_1.z.string().trim().min(1).max(50),
+    dateFrom: zod_1.z.string().min(1),
+    dateTo: zod_1.z.string().min(1),
+});
+exports.createJobRouter.post('/jobs/:jobRef/eqlists', async (req, res) => {
+    const parsed = createEqlistSchema.safeParse(req.body);
+    if (!parsed.success) {
+        res.status(400).json({ ok: false, error: 'Validation failed', issues: parsed.error.flatten() });
+        return;
+    }
+    try {
+        const result = await (0, hiretrack_booking_api_1.createHiretrackEqlist)(parsed.data.jobId, parsed.data.title, parsed.data.dateFrom, parsed.data.dateTo);
+        res.json({ ok: true, ...result });
+    }
+    catch (error) {
+        res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+});
+// Skeleton for editing an Eqlist's own date range after creation - each
+// Eqlist on a job can genuinely run on different dates from the job's own
+// (or another Eqlist's) range, see EQUIPMENT_CATALOG_MATCH_BLUEPRINT.md.
+const updateEqlistDatesSchema = zod_1.z.object({
+    dateFrom: zod_1.z.string().min(1),
+    dateTo: zod_1.z.string().min(1),
+});
+exports.createJobRouter.put('/jobs/:jobRef/eqlists/:eqlistId/dates', async (req, res) => {
+    const parsed = updateEqlistDatesSchema.safeParse(req.body);
+    const eqlistId = Number(req.params.eqlistId);
+    if (!parsed.success || !Number.isInteger(eqlistId) || eqlistId <= 0) {
+        res.status(400).json({ ok: false, error: 'Validation failed', issues: parsed.success ? undefined : parsed.error.flatten() });
+        return;
+    }
+    try {
+        await (0, hiretrack_booking_api_1.updateHiretrackEqlistDates)(eqlistId, parsed.data.dateFrom, parsed.data.dateTo);
+        res.json({ ok: true, eqlistId, dateFrom: parsed.data.dateFrom, dateTo: parsed.data.dateTo });
+    }
+    catch (error) {
+        res.status(502).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+});
 const appendBookingLineSchema = bookingLineSchema.extend({
     // Which EqSections row to move the newly appended line into - api_v2's
     // append_to_booking has no section param of its own, see
