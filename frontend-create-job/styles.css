@@ -249,6 +249,18 @@ main {
 .job-dates-edit-form button { border: 1px solid var(--line); background: #fff; padding: 6px 10px; cursor: pointer; font: 600 12px Arial, sans-serif; white-space: nowrap; }
 .job-dates-edit-form .cancel-btn { color: var(--muted); }
 
+/* Shown only while any check_availability calls for the loaded Eqlist are
+   still in flight - a large job (real example: 120 distinct equipment
+   types) can take tens of seconds to fully populate, since the backend
+   deliberately throttles these against HireTrack's own gateway concurrency
+   cap (see EQUIPMENT_CATALOG_MATCH_BLUEPRINT.md) - this makes that wait
+   visible instead of leaving a silent pile of "…" badges with no sense of
+   progress. Hides itself the moment nothing is left pending. */
+.availability-progress { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 12px; color: var(--muted); }
+.availability-progress-bar { flex: 1; max-width: 220px; height: 6px; background: var(--canvas); border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+.availability-progress-fill { height: 100%; background: var(--blue); transition: width .15s ease-out; }
+#availability-progress-text { white-space: nowrap; }
+
 /* Nested Sections -> lines -> (Composite/Alias) components tree */
 .lines-tree { margin-top: 10px; border: 1px solid var(--line); }
 

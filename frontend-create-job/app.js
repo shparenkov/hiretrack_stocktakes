@@ -14,6 +14,10 @@
     // opened. Avoids re-fetching the same item's availability over and over
     // as search queries get refined/re-typed.
     availabilityCache: new Map(),
+    // How many getAvailability fetches have been kicked off vs settled for
+    // the currently loaded Eqlist - drives the progress bar below. Reset
+    // alongside availabilityCache whenever a different Eqlist is shown.
+    availabilityProgress: { total: 0, done: 0 },
     jobDefaults: null, // { startTime, endTime, periodDays } - HireTrack's own Jobs>Defaults settings
     salesPeople: [],
   };
@@ -43,6 +47,9 @@
   const eqlistActionsEl = document.getElementById('eqlist-actions');
   const jobDatesEditBtnEl = document.getElementById('job-dates-edit-btn');
   const jobDatesEditFormEl = document.getElementById('job-dates-edit-form');
+  const availabilityProgressEl = document.getElementById('availability-progress');
+  const availabilityProgressFillEl = document.getElementById('availability-progress-fill');
+  const availabilityProgressTextEl = document.getElementById('availability-progress-text');
   const existingLinesTreeEl = document.getElementById('existing-lines-tree');
 
   const jobNameInput = document.getElementById('job-name');
@@ -1050,6 +1057,24 @@
     }
   }
 
+  // Shown only while at least one getAvailability fetch for the currently
+  // loaded Eqlist is still in flight - the backend deliberately throttles
+  // these against HireTrack's own gateway concurrency cap (see
+  // EQUIPMENT_CATALOG_MATCH_BLUEPRINT.md), so a large job (real example:
+  // 120 distinct equipment types) can take tens of seconds to fully
+  // populate. Makes that wait visible instead of a silent pile of "…"
+  // badges with no sense of whether anything is still happening.
+  function updateAvailabilityProgress() {
+    const { total, done } = state.availabilityProgress;
+    if (total === 0 || done >= total) {
+      availabilityProgressEl.classList.add('hidden');
+      return;
+    }
+    availabilityProgressEl.classList.remove('hidden');
+    availabilityProgressFillEl.style.width = `${Math.round((done / total) * 100)}%`;
+    availabilityProgressTextEl.textContent = `Проверка доступности: ${done} / ${total}`;
+  }
+
   // Fetches (and caches) a type's availability for the currently loaded
   // job's fixed date range - shared by tree lines, section-add search
   // results, and newly-inserted lines, so the same typeId is never fetched
@@ -1061,6 +1086,8 @@
     if (state.availabilityCache.has(typeId)) {
       return Promise.resolve(state.availabilityCache.get(typeId));
     }
+    state.availabilityProgress.total += 1;
+    updateAvailabilityProgress();
     const params = new URLSearchParams({
       typeId: String(typeId),
       quantity: '1',
@@ -1078,6 +1105,10 @@
       .catch((err) => {
         state.availabilityCache.delete(typeId);
         throw err;
+      })
+      .finally(() => {
+        state.availabilityProgress.done += 1;
+        updateAvailabilityProgress();
       });
     state.availabilityCache.set(typeId, promise);
     return promise;
@@ -1186,6 +1217,8 @@
     // cached availability figure from the previously-shown list would be
     // wrong here.
     state.availabilityCache = new Map();
+    state.availabilityProgress = { total: 0, done: 0 };
+    updateAvailabilityProgress();
 
     jobLoadedClientEl.textContent = eqlist.clientName || `#${eqlist.clientId}`;
     jobLoadedDatesEl.textContent = `${READBACK_FORMATTER.format(new Date(eqlist.dateOut.replace(' ', 'T')))} — ${READBACK_FORMATTER.format(new Date(eqlist.dateBack.replace(' ', 'T')))}`;
@@ -1344,6 +1377,8 @@
         // Dates just changed - any cached availability was computed for the
         // old range.
         state.availabilityCache = new Map();
+        state.availabilityProgress = { total: 0, done: 0 };
+        updateAvailabilityProgress();
         close();
       } catch (err) {
         jobRefStatusEl.textContent = `Ошибка изменения дат: ${err.message}`;
@@ -1359,6 +1394,8 @@
     }
     state.loadedJob = null;
     state.availabilityCache = new Map();
+    state.availabilityProgress = { total: 0, done: 0 };
+    updateAvailabilityProgress();
     jobLoadedInfoEl.classList.add('hidden');
     jobRefStatusEl.textContent = 'Загрузка…';
     try {

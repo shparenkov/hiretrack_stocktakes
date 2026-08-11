@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Создание работы — HireTrack NX</title>
-  <link rel="stylesheet" href="styles.css?v=14" />
+  <link rel="stylesheet" href="styles.css?v=15" />
 </head>
 <body>
   <header class="topbar">
@@ -97,11 +97,15 @@
           <span class="hint">(должны совпадать с уже существующими позициями)</span>
         </p>
         <div id="job-dates-edit-form" class="job-dates-edit-form hidden"></div>
+        <div id="availability-progress" class="availability-progress hidden">
+          <div class="availability-progress-bar"><div id="availability-progress-fill" class="availability-progress-fill"></div></div>
+          <span id="availability-progress-text"></span>
+        </div>
         <div id="existing-lines-tree" class="lines-tree"></div>
       </div>
     </section>
   </main>
 
-  <script src="app.js?v=22"></script>
+  <script src="app.js?v=23"></script>
 </body>
 </html>
