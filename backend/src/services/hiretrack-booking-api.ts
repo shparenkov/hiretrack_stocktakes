@@ -40,6 +40,15 @@ function loadHiretrackConfig(): HiretrackConfig {
   return JSON.parse(fs.readFileSync(configPath, 'utf8')) as HiretrackConfig;
 }
 
+// Carries the HTTP status + parsed body (not just a stringified message) so
+// callers can distinguish "rate limited, worth retrying" from any other
+// failure - see checkHiretrackAvailability's retry wrapper.
+class HiretrackHttpError extends Error {
+  constructor(message: string, public readonly statusCode: number, public readonly body: unknown) {
+    super(message);
+  }
+}
+
 function requestJson(method: string, targetUrl: string, headers: Record<string, string>, timeoutMs: number) {
   const url = new URL(targetUrl);
   const transport = url.protocol === 'https:' ? https : http;
@@ -74,7 +83,7 @@ function requestJson(method: string, targetUrl: string, headers: Record<string, 
           }
 
           if ((res.statusCode || 0) >= 400) {
-            reject(new Error(`HTTP ${res.statusCode} from ${targetUrl}: ${JSON.stringify(parsed)}`));
+            reject(new HiretrackHttpError(`HTTP ${res.statusCode} from ${targetUrl}: ${JSON.stringify(parsed)}`, res.statusCode || 0, parsed));
             return;
           }
 
@@ -89,6 +98,82 @@ function requestJson(method: string, targetUrl: string, headers: Record<string, 
     req.on('error', reject);
     req.end();
   });
+}
+
+// Simple counting semaphore - runs at most `limit` callbacks concurrently,
+// queueing the rest in call order. See availabilityLimiter below for why
+// this exists.
+class ConcurrencyLimiter {
+  private active = 0;
+  private readonly queue: (() => void)[] = [];
+
+  constructor(private readonly limit: number) {}
+
+  async run<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.active >= this.limit) {
+      await new Promise<void>((resolve) => this.queue.push(resolve));
+    }
+    this.active += 1;
+    try {
+      return await fn();
+    } finally {
+      this.active -= 1;
+      const next = this.queue.shift();
+      if (next) next();
+    }
+  }
+}
+
+// HireTrack's own api_v2 gateway enforces a GLOBAL concurrency cap of its
+// own - confirmed live 2026-08-11 by loading a real 121-line job
+// (Eqlist 6807): 112 of 121 concurrent check_availability calls came back
+// HTTP 503 `{"error":"Service temporarily unavailable","current_load":10,
+// "max_capacity":10,"retry_after":5}` the moment more than 10 were in
+// flight at once, and nothing anywhere retried them - those lines' badges
+// were left stuck on "?" permanently (reported as "availability just stops
+// updating"). This cap is shared across every request hitting the gateway
+// process-wide, not per browser tab, so the limiter has to live here
+// (server-side, one Node process funnels all of this app's api_v2 traffic)
+// rather than in the frontend, where multiple tabs/users could still
+// collectively exceed it even if each one throttled itself. Capped well
+// under 10 to leave headroom for other concurrent api_v2 traffic (booking
+// writes, other users' sessions) sharing the same gateway.
+const availabilityLimiter = new ConcurrencyLimiter(4);
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRateLimitedError(error: unknown): error is HiretrackHttpError {
+  return error instanceof HiretrackHttpError && error.statusCode === 503;
+}
+
+// Honors the gateway's own `retry_after` (seconds) when it supplies one,
+// since that's it telling us how long it expects to stay overloaded -
+// falls back to 1s if the body doesn't parse as expected.
+function retryDelayMs(error: HiretrackHttpError): number {
+  const body = error.body as { retry_after?: unknown } | null;
+  const seconds = typeof body?.retry_after === 'number' ? body.retry_after : 1;
+  return Math.max(200, seconds * 1000);
+}
+
+// Retries only HTTP 503 (gateway overloaded) - any other failure (bad
+// params, real "no stock" style rejections, network errors) surfaces
+// immediately, unchanged. With availabilityLimiter already capping our own
+// concurrency well under the gateway's limit, this should rarely trigger in
+// practice - it's a safety net for load from elsewhere (other users'
+// sessions, other integrations) sharing the same gateway.
+async function withRetryOn503<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (!isRateLimitedError(error) || attempt >= maxAttempts) {
+        throw error;
+      }
+      await sleep(retryDelayMs(error));
+    }
+  }
 }
 
 function normalizeInt(value: unknown): number | null {
@@ -190,7 +275,14 @@ export async function checkHiretrackAvailability(input: CheckAvailabilityInput):
   const url = `${baseUrl}/api_v2/check_availability?${params.toString()}`;
   // The doc labels this GET, but its own curl example (and live testing, 2026-08-09) uses POST -- GET 500s with
   // "No item found with name check_availability".
-  const raw = await requestJson('POST', url, config.hiretrack?.headers || {}, Number(config.poller?.timeoutMs || 15000));
+  // Concurrency-limited + retried on 503 - see availabilityLimiter/
+  // withRetryOn503's own comments for why (a big job's tree fires one of
+  // these per distinct equipment type, easily dozens to 100+ at once).
+  const raw = await withRetryOn503(() =>
+    availabilityLimiter.run(() =>
+      requestJson('POST', url, config.hiretrack?.headers || {}, Number(config.poller?.timeoutMs || 15000)),
+    ),
+  );
 
   if (!Array.isArray(raw) || raw.length === 0) {
     throw new Error('HireTrack check_availability returned no rows.');

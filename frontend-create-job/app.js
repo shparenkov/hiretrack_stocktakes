@@ -1094,6 +1094,18 @@
   // re-rendering the whole tree.
   async function refreshExistingLineAvailability(loadedJob, line) {
     const badgeEl = () => existingLinesTreeEl.querySelector(`.tree-line[data-line-ref-id="${line.lineRefId}"] .tree-line-availability`);
+    // A handful of legacy Sort rows carry a NULL Type (confirmed live on a
+    // real job) - fetching availability for that is guaranteed to fail
+    // (HireTrack rejects a null type id outright), so skip it instead of
+    // wasting a slot in the concurrency-limited queue on a doomed request.
+    if (!line.typeId) {
+      const el = badgeEl();
+      if (el) {
+        el.textContent = '?';
+        el.className = 'tree-line-availability none';
+      }
+      return;
+    }
     try {
       const { stocklevelForWarehouse } = await getAvailability(line.typeId, loadedJob);
       const remainder = stocklevelForWarehouse - line.qty;
