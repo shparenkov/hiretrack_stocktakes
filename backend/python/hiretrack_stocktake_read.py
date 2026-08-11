@@ -216,9 +216,10 @@ JOB_LOOKUP_QUERY = """
 """
 
 JOB_LOOKUP_EQLISTS_QUERY = """
-    SELECT "Eql_no", "Eql_name", "DateOut", "DateBack", "Client_no", "Client_name"
+    SELECT "Eql_no", "Eql_name", "Eql_Title", "DateOut", "DateBack", "Client_no", "Client_name"
     FROM "Eqlists"
     WHERE "Job_no" = ?
+    ORDER BY "Eql_no"
 """
 
 JOB_LOOKUP_SORT_QUERY = """

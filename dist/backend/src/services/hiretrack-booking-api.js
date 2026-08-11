@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.checkHiretrackAvailability = checkHiretrackAvailability;
 exports.initialiseHiretrackBooking = initialiseHiretrackBooking;
 exports.updateHiretrackEqlistDates = updateHiretrackEqlistDates;
+exports.updateHiretrackEqlistTitle = updateHiretrackEqlistTitle;
 exports.createHiretrackJobShell = createHiretrackJobShell;
 exports.createHiretrackBooking = createHiretrackBooking;
 exports.appendLinesToExistingBooking = appendLinesToExistingBooking;
@@ -208,6 +209,19 @@ async function updateHiretrackEqlistDates(eqlistId, dateFrom, dateTo) {
         dateTo,
     });
 }
+// CreateNewEqlist (db.sql:9143-9144) always sets Eql_Title itself to
+// `Job_Title || ':' || Eql_name` (the auto-generated internal reference
+// code) with no way to opt out via api_v2 - confirmed live across every
+// Eqlist created through /create-job/ so far. This corrects it to just the
+// clean job name right after creation. Eql_name (the short reference code)
+// is left alone - it's not what's shown as the list's name.
+async function updateHiretrackEqlistTitle(eqlistId, title) {
+    await (0, hiretrack_odbc_write_1.runHiretrackOdbcWrite)({
+        operation: 'update-eqlist-title',
+        eqlistId,
+        title,
+    });
+}
 // Creates an empty Job+Eqlist shell with no real equipment lines - for the
 // "just create the job header, then add equipment through the same
 // per-section UI as an existing job" flow. Deliberately does not append any
@@ -232,6 +246,9 @@ async function createHiretrackJobShell(input) {
     // never forwards availability_datetime_from/to to CreateNewEqlist, so it
     // always falls back to a past-date safety clamp. Correct it directly.
     await updateHiretrackEqlistDates(init.eqlistId, input.dateFrom, input.dateTo);
+    // Same for the Eql_Title "JobName:AutoCode" concatenation - see
+    // updateHiretrackEqlistTitle's own comment.
+    await updateHiretrackEqlistTitle(init.eqlistId, input.jobName);
     return { jobId: init.jobId, jobRef: init.jobRef, eqlistId: init.eqlistId, eqRef: init.eqRef };
 }
 // Batches initialise_new_booking (creates the Job+Eqlist shell) +
@@ -276,6 +293,9 @@ async function createHiretrackBooking(input) {
     // (bvrBookingDatesNEQListDates) because the line's dates don't match the Eqlist's
     // actual (wrong) header dates. Correct it directly before appending anything.
     await updateHiretrackEqlistDates(init.eqlistId, input.dateFrom, input.dateTo);
+    // Same for the Eql_Title "JobName:AutoCode" concatenation - see
+    // updateHiretrackEqlistTitle's own comment.
+    await updateHiretrackEqlistTitle(init.eqlistId, input.jobName);
     let linesWritten = 0;
     const failedLines = [];
     // Sequential on purpose, same reasoning as the Note write path: rider line

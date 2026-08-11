@@ -34,6 +34,12 @@ export interface HiretrackJobLookupSection {
 export interface HiretrackJobLookupEqlist {
   eqlistId: number;
   eqlistName: string | null;
+  // Eqlists.Eql_Title - the human-facing label for this list (distinct from
+  // eqlistName, the short auto-generated reference code). See
+  // updateHiretrackEqlistTitle's comment for why this needed fixing on
+  // creation - jobs made before that fix still carry the old
+  // "JobTitle:AutoCode" concatenation here.
+  eqlistTitle: string | null;
   dateOut: string;
   dateBack: string;
   clientId: number | null;
@@ -58,6 +64,7 @@ interface RawSectionRow {
 interface RawEqlistRow {
   Eql_no: number;
   Eql_name: string | null;
+  Eql_Title: string | null;
   DateOut: string;
   DateBack: string;
   Client_no: number | null;
@@ -196,6 +203,7 @@ export async function lookupHiretrackJob(jobRef: string): Promise<HiretrackJobLo
     eqlists.push({
       eqlistId: eqlist.Eql_no,
       eqlistName: eqlist.Eql_name ?? null,
+      eqlistTitle: eqlist.Eql_Title ?? null,
       dateOut,
       dateBack,
       clientId: eqlist.Client_no ?? null,

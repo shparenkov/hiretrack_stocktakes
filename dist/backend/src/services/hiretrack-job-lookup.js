@@ -79,6 +79,7 @@ async function lookupHiretrackJob(jobRef) {
         eqlists.push({
             eqlistId: eqlist.Eql_no,
             eqlistName: eqlist.Eql_name ?? null,
+            eqlistTitle: eqlist.Eql_Title ?? null,
             dateOut,
             dateBack,
             clientId: eqlist.Client_no ?? null,

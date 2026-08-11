@@ -132,6 +132,25 @@ def update_eqlist_dates(cursor, params):
     return {"eqlistId": eqlist_id, "dateFrom": date_from, "dateTo": date_to}
 
 
+def update_eqlist_title(cursor, params):
+    # CreateNewEqlist (the stored function behind initialise_new_booking, per
+    # db.sql:9143-9144) always sets Eql_Title itself to
+    # `Job_Title || ':' || Eql_name` (e.g. "5150 @ 10.08.2026:Р7170МСКАРНД01МСК")
+    # - there is no parameter anywhere in api_v2 or the underlying function to
+    # opt out of this. Confirmed live across 15 real Eqlists created through
+    # /create-job/ - all show this ugly, redundant title. Eql_name itself
+    # (the short internal reference code, e.g. "Р7170МСКАРНД01МСК") is left
+    # untouched - it follows the same auto-numbered convention as Job_Ref
+    # elsewhere in the system and isn't what's shown as the list's name.
+    eqlist_id = params.get("eqlistId")
+    title = params.get("title")
+    if eqlist_id is None or not title:
+        raise ValueError("update-eqlist-title requires 'eqlistId' and 'title'")
+
+    cursor.execute('UPDATE "Eqlists" SET "Eql_Title" = ? WHERE "Eql_no" = ?', title[:50], eqlist_id)
+    return {"eqlistId": eqlist_id, "title": title[:50]}
+
+
 def rename_section(cursor, params):
     section_id = params.get("sectionId")
     section_text = params.get("sectionText")
@@ -265,6 +284,8 @@ def main():
             result = add_note_line(cursor, request)
         elif operation == "update-eqlist-dates":
             result = update_eqlist_dates(cursor, request)
+        elif operation == "update-eqlist-title":
+            result = update_eqlist_title(cursor, request)
         elif operation == "rename-section":
             result = rename_section(cursor, request)
         elif operation == "create-section":

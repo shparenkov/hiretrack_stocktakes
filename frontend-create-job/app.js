@@ -6,6 +6,7 @@
     catalogLoaded: false,
     selectedClient: null,
     loadedJob: null, // { jobRef, eqlistId, clientId, clientName, dateFrom, dateTo, existingSections, existingLines }
+    loadedJobEqlists: [], // every Eqlist on the currently loaded job, for the picker (see applyEqlist)
     // typeId -> { availableQty, stocklevelForWarehouse }. Scoped to the
     // currently loaded job's fixed date range - fetched at most once per
     // typeId per job (reused across every search result, tree line, and
@@ -30,6 +31,8 @@
   const jobLoadedRefEl = document.getElementById('job-loaded-ref');
   const jobLoadedClientEl = document.getElementById('job-loaded-client');
   const jobLoadedDatesEl = document.getElementById('job-loaded-dates');
+  const jobEqlistPickerEl = document.getElementById('job-eqlist-picker');
+  const jobEqlistSelectEl = document.getElementById('job-eqlist-select');
   const existingLinesTreeEl = document.getElementById('existing-lines-tree');
 
   const jobNameInput = document.getElementById('job-name');
@@ -82,6 +85,12 @@
     hour: '2-digit',
     minute: '2-digit',
   });
+
+  // Compact date for the Eqlist picker's <option> labels - a job with many
+  // Eqlists (real production example: 27 on one job, one per act on a
+  // multi-day festival) needs short labels, not READBACK_FORMATTER's full
+  // weekday+month text.
+  const SHORT_DATE_FORMATTER = new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit' });
 
   // Live human-readable readback of each date field, so a value the browser
   // silently defaulted/reset (native datetime-local inputs are unreliable if
@@ -1072,6 +1081,48 @@
     }
   });
 
+  // A Job can carry more than one Eqlist - confirmed live this is common in
+  // production (one real job has 27, one per act on a multi-day festival),
+  // and the app used to silently only ever load eqlists[0], making every
+  // other list on the job invisible. Loads the given eqlist's sections/
+  // lines/dates/client into state.loadedJob and (re)renders the tree - used
+  // both for the initial load and for switching via the picker below.
+  function applyEqlist(job, eqlist) {
+    state.loadedJob = {
+      jobRef: job.jobRef,
+      jobNo: job.jobNo,
+      eqlistId: eqlist.eqlistId,
+      clientId: eqlist.clientId,
+      clientName: eqlist.clientName,
+      dateFrom: eqlist.dateOut,
+      dateTo: eqlist.dateBack,
+      existingSections: eqlist.sections || [],
+      existingLines: eqlist.lines || [],
+    };
+    // A different Eqlist almost always means a different date range, so a
+    // cached availability figure from the previously-shown list would be
+    // wrong here.
+    state.availabilityCache = new Map();
+
+    jobLoadedClientEl.textContent = eqlist.clientName || `#${eqlist.clientId}`;
+    jobLoadedDatesEl.textContent = `${READBACK_FORMATTER.format(new Date(eqlist.dateOut.replace(' ', 'T')))} — ${READBACK_FORMATTER.format(new Date(eqlist.dateBack.replace(' ', 'T')))}`;
+    renderExistingLinesTree(state.loadedJob);
+  }
+
+  function eqlistOptionLabel(eqlist) {
+    const title = (eqlist.eqlistTitle || '').trim() || eqlist.eqlistName || `#${eqlist.eqlistId}`;
+    const from = SHORT_DATE_FORMATTER.format(new Date(eqlist.dateOut.replace(' ', 'T')));
+    const to = SHORT_DATE_FORMATTER.format(new Date(eqlist.dateBack.replace(' ', 'T')));
+    return `${title} (${from}–${to})`;
+  }
+
+  jobEqlistSelectEl.addEventListener('change', () => {
+    if (!state.loadedJob) return;
+    const selected = state.loadedJobEqlists.find((eqlist) => String(eqlist.eqlistId) === jobEqlistSelectEl.value);
+    if (!selected) return;
+    applyEqlist({ jobRef: state.loadedJob.jobRef, jobNo: state.loadedJob.jobNo }, selected);
+  });
+
   async function openExistingJob(jobRef, { pushHistory = true } = {}) {
     if (!jobRef) {
       jobRefStatusEl.textContent = 'Введите номер работы или выберите из списка.';
@@ -1086,27 +1137,25 @@
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'Работа не найдена');
       const job = data.job;
-      const eqlist = job.eqlists && job.eqlists[0];
-      if (!eqlist) throw new Error('У этой работы нет Eqlist — добавление позиций невозможно.');
-
-      state.loadedJob = {
-        jobRef: job.jobRef,
-        jobNo: job.jobNo,
-        eqlistId: eqlist.eqlistId,
-        clientId: eqlist.clientId,
-        clientName: eqlist.clientName,
-        dateFrom: eqlist.dateOut,
-        dateTo: eqlist.dateBack,
-        existingSections: eqlist.sections || [],
-        existingLines: eqlist.lines || [],
-      };
+      const eqlists = job.eqlists || [];
+      if (eqlists.length === 0) throw new Error('У этой работы нет Eqlist — добавление позиций невозможно.');
+      state.loadedJobEqlists = eqlists;
 
       jobRefStatusEl.textContent = '';
       recentJobsEl.innerHTML = '';
       jobLoadedRefEl.textContent = job.jobRef;
-      jobLoadedClientEl.textContent = eqlist.clientName || `#${eqlist.clientId}`;
-      jobLoadedDatesEl.textContent = `${READBACK_FORMATTER.format(new Date(eqlist.dateOut.replace(' ', 'T')))} — ${READBACK_FORMATTER.format(new Date(eqlist.dateBack.replace(' ', 'T')))}`;
-      renderExistingLinesTree(state.loadedJob);
+
+      if (eqlists.length > 1) {
+        jobEqlistSelectEl.innerHTML = eqlists
+          .map((eqlist) => `<option value="${eqlist.eqlistId}">${escapeHtml(eqlistOptionLabel(eqlist))}</option>`)
+          .join('');
+        jobEqlistPickerEl.classList.remove('hidden');
+      } else {
+        jobEqlistSelectEl.innerHTML = '';
+        jobEqlistPickerEl.classList.add('hidden');
+      }
+
+      applyEqlist(job, eqlists[0]);
       jobLoadedInfoEl.classList.remove('hidden');
       if (pushHistory) pushJobHistory(job.jobRef);
     } catch (err) {

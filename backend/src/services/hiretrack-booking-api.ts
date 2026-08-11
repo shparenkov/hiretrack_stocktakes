@@ -309,6 +309,20 @@ export async function updateHiretrackEqlistDates(eqlistId: number, dateFrom: str
   });
 }
 
+// CreateNewEqlist (db.sql:9143-9144) always sets Eql_Title itself to
+// `Job_Title || ':' || Eql_name` (the auto-generated internal reference
+// code) with no way to opt out via api_v2 - confirmed live across every
+// Eqlist created through /create-job/ so far. This corrects it to just the
+// clean job name right after creation. Eql_name (the short reference code)
+// is left alone - it's not what's shown as the list's name.
+export async function updateHiretrackEqlistTitle(eqlistId: number, title: string): Promise<void> {
+  await runHiretrackOdbcWrite({
+    operation: 'update-eqlist-title',
+    eqlistId,
+    title,
+  });
+}
+
 export interface CreateJobShellInput {
   jobName: string;
   clientId: number;
@@ -358,6 +372,9 @@ export async function createHiretrackJobShell(input: CreateJobShellInput): Promi
   // never forwards availability_datetime_from/to to CreateNewEqlist, so it
   // always falls back to a past-date safety clamp. Correct it directly.
   await updateHiretrackEqlistDates(init.eqlistId, input.dateFrom, input.dateTo);
+  // Same for the Eql_Title "JobName:AutoCode" concatenation - see
+  // updateHiretrackEqlistTitle's own comment.
+  await updateHiretrackEqlistTitle(init.eqlistId, input.jobName);
 
   return { jobId: init.jobId, jobRef: init.jobRef, eqlistId: init.eqlistId, eqRef: init.eqRef };
 }
@@ -408,6 +425,9 @@ export async function createHiretrackBooking(input: CreateBookingInput): Promise
   // (bvrBookingDatesNEQListDates) because the line's dates don't match the Eqlist's
   // actual (wrong) header dates. Correct it directly before appending anything.
   await updateHiretrackEqlistDates(init.eqlistId, input.dateFrom, input.dateTo);
+  // Same for the Eql_Title "JobName:AutoCode" concatenation - see
+  // updateHiretrackEqlistTitle's own comment.
+  await updateHiretrackEqlistTitle(init.eqlistId, input.jobName);
 
   let linesWritten = 0;
   const failedLines: { typeId: number; error: string }[] = [];
