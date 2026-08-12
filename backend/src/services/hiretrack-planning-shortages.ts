@@ -66,7 +66,22 @@ function findShortageCells(types: PlanningOccupancyType[], start: string): Flagg
   return flagged;
 }
 
+// Exposed via GET /api/planning/shortages/progress so the frontend can poll
+// it while the (potentially slow, real-api_v2-calls) confirm pass runs
+// inside one long-lived request - same "small mutable counter, updated via
+// .finally() on each fetch" shape as frontend-create-job/app.js's own
+// availability-loading progress bar, just server-side since this pass runs
+// entirely inside the request handler rather than being driven by the
+// browser.
+const progress = { total: 0, done: 0 };
+
+export function getShortagesConfirmProgress(): { total: number; done: number } {
+  return { ...progress };
+}
+
 async function confirmShortageCells(flagged: FlaggedCell[]): Promise<ConfirmedCell[]> {
+  progress.total = flagged.length;
+  progress.done = 0;
   const confirmed: ConfirmedCell[] = [];
   await Promise.all(
     flagged.map(async (cell) => {
@@ -86,6 +101,8 @@ async function confirmShortageCells(flagged: FlaggedCell[]): Promise<ConfirmedCe
         // positive surfaced to the user is safer than silently dropping a
         // real shortage because the confirm check itself errored.
         confirmed.push({ ...cell, availableQty: null });
+      } finally {
+        progress.done += 1;
       }
     }),
   );

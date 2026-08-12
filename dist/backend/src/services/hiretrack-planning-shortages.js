@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.getShortagesConfirmProgress = getShortagesConfirmProgress;
 exports.getPlanningShortagesData = getPlanningShortagesData;
 const hiretrack_booking_api_1 = require("./hiretrack-booking-api");
 const hiretrack_planning_read_1 = require("./hiretrack-planning-read");
@@ -27,7 +28,20 @@ function findShortageCells(types, start) {
     }
     return flagged;
 }
+// Exposed via GET /api/planning/shortages/progress so the frontend can poll
+// it while the (potentially slow, real-api_v2-calls) confirm pass runs
+// inside one long-lived request - same "small mutable counter, updated via
+// .finally() on each fetch" shape as frontend-create-job/app.js's own
+// availability-loading progress bar, just server-side since this pass runs
+// entirely inside the request handler rather than being driven by the
+// browser.
+const progress = { total: 0, done: 0 };
+function getShortagesConfirmProgress() {
+    return { ...progress };
+}
 async function confirmShortageCells(flagged) {
+    progress.total = flagged.length;
+    progress.done = 0;
     const confirmed = [];
     await Promise.all(flagged.map(async (cell) => {
         try {
@@ -47,6 +61,9 @@ async function confirmShortageCells(flagged) {
             // positive surfaced to the user is safer than silently dropping a
             // real shortage because the confirm check itself errored.
             confirmed.push({ ...cell, availableQty: null });
+        }
+        finally {
+            progress.done += 1;
         }
     }));
     return confirmed;

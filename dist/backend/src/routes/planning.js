@@ -25,3 +25,6 @@ exports.planningRouter.get('/shortages', async (req, res) => {
         res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
     }
 });
+exports.planningRouter.get('/shortages/progress', (_req, res) => {
+    res.json((0, hiretrack_planning_shortages_1.getShortagesConfirmProgress)());
+});

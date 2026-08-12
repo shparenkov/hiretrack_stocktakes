@@ -1,6 +1,6 @@
 import { Request, Response, Router } from 'express';
 import { getPlanningOccupancyData } from '../services/hiretrack-planning-read';
-import { getPlanningShortagesData } from '../services/hiretrack-planning-shortages';
+import { getPlanningShortagesData, getShortagesConfirmProgress } from '../services/hiretrack-planning-shortages';
 
 export const planningRouter = Router();
 
@@ -22,4 +22,8 @@ planningRouter.get('/shortages', async (req: Request, res: Response) => {
   } catch (error) {
     res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
   }
+});
+
+planningRouter.get('/shortages/progress', (_req: Request, res: Response) => {
+  res.json(getShortagesConfirmProgress());
 });

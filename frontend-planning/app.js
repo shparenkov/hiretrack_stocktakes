@@ -212,12 +212,51 @@ document.getElementById("shortages-panel").addEventListener("click", (ev) => {
   renderShortages();
 });
 
+const shortagesProgressEl = document.getElementById("shortages-progress");
+const shortagesProgressFillEl = document.getElementById("shortages-progress-fill");
+const shortagesProgressTextEl = document.getElementById("shortages-progress-text");
+let shortagesProgressTimer = null;
+
+async function pollShortagesProgress() {
+  try {
+    const resp = await fetch("/api/planning/shortages/progress");
+    if (!resp.ok) return;
+    const { total, done } = await resp.json();
+    if (total === 0) {
+      shortagesProgressEl.classList.remove("hidden");
+      shortagesProgressFillEl.style.width = "0%";
+      shortagesProgressTextEl.textContent = "Подготовка проверки нехваток…";
+      return;
+    }
+    shortagesProgressEl.classList.remove("hidden");
+    shortagesProgressFillEl.style.width = `${Math.round((done / total) * 100)}%`;
+    shortagesProgressTextEl.textContent = `Проверка нехваток через HireTrack: ${done} / ${total}`;
+  } catch (e) {
+    // A failed poll tick just skips this update - the next tick retries.
+  }
+}
+
+function startShortagesProgressPolling() {
+  stopShortagesProgressPolling();
+  pollShortagesProgress();
+  shortagesProgressTimer = setInterval(pollShortagesProgress, 1000);
+}
+
+function stopShortagesProgressPolling() {
+  if (shortagesProgressTimer) {
+    clearInterval(shortagesProgressTimer);
+    shortagesProgressTimer = null;
+  }
+  shortagesProgressEl.classList.add("hidden");
+}
+
 async function loadShortages(options) {
   const forceRefresh = options && options.forceRefresh;
   const url = forceRefresh ? "/api/planning/shortages?refresh=1" : "/api/planning/shortages";
   state.shortagesLoading = true;
   state.shortagesError = null;
   renderShortages();
+  startShortagesProgressPolling();
   try {
     const resp = await fetch(url);
     if (!resp.ok) {
@@ -229,6 +268,7 @@ async function loadShortages(options) {
     state.shortagesError = e.message;
   } finally {
     state.shortagesLoading = false;
+    stopShortagesProgressPolling();
     renderShortages();
   }
 }
