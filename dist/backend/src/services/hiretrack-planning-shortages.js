@@ -9,24 +9,44 @@ function addDaysIso(iso, days) {
     d.setUTCDate(d.getUTCDate() + days);
     return d.toISOString().slice(0, 10);
 }
-function findShortageCells(types, start) {
-    const flagged = [];
+// Collapses each type's own consecutive over-booked days into one run,
+// carrying the PEAK booked qty within the run - if check_availability says
+// that peak is available for the whole run, every lesser day in it is too.
+function findShortageRuns(types, start) {
+    const runs = [];
     for (const type of types) {
         if (type.siteOwns == null)
             continue;
+        const owned = type.siteOwns;
+        let runStartIndex = -1;
+        let runPeakBooked = 0;
+        const flushRun = (endIndexExclusive) => {
+            if (runStartIndex === -1)
+                return;
+            runs.push({
+                typeId: type.typeId,
+                typeName: type.name,
+                dayStart: addDaysIso(start, runStartIndex),
+                dayEnd: addDaysIso(start, endIndexExclusive - 1),
+                booked: runPeakBooked,
+                owned,
+            });
+            runStartIndex = -1;
+            runPeakBooked = 0;
+        };
         type.dayTotals.forEach((qty, index) => {
-            if (qty > type.siteOwns) {
-                flagged.push({
-                    typeId: type.typeId,
-                    typeName: type.name,
-                    day: addDaysIso(start, index),
-                    booked: qty,
-                    owned: type.siteOwns,
-                });
+            if (qty > owned) {
+                if (runStartIndex === -1)
+                    runStartIndex = index;
+                runPeakBooked = Math.max(runPeakBooked, qty);
+            }
+            else {
+                flushRun(index);
             }
         });
+        flushRun(type.dayTotals.length);
     }
-    return flagged;
+    return runs;
 }
 // Exposed via GET /api/planning/shortages/progress so the frontend can poll
 // it while the (potentially slow, real-api_v2-calls) confirm pass runs
@@ -39,28 +59,28 @@ const progress = { total: 0, done: 0 };
 function getShortagesConfirmProgress() {
     return { ...progress };
 }
-async function confirmShortageCells(flagged) {
+async function confirmShortageRuns(flagged) {
     progress.total = flagged.length;
     progress.done = 0;
     const confirmed = [];
-    await Promise.all(flagged.map(async (cell) => {
+    await Promise.all(flagged.map(async (run) => {
         try {
             const result = await (0, hiretrack_booking_api_1.checkHiretrackAvailability)({
-                typeId: cell.typeId,
-                quantity: cell.booked,
-                dateFrom: cell.day,
-                dateTo: addDaysIso(cell.day, 1),
+                typeId: run.typeId,
+                quantity: run.booked,
+                dateFrom: run.dayStart,
+                dateTo: addDaysIso(run.dayEnd, 1),
             });
             const availableQty = result.availableQty ?? result.stocklevelForWarehouse ?? null;
-            if (availableQty == null || availableQty < cell.booked) {
-                confirmed.push({ ...cell, availableQty });
+            if (availableQty == null || availableQty < run.booked) {
+                confirmed.push({ ...run, availableQty });
             }
         }
         catch (error) {
             // A failed confirm call is kept as still-flagged - a possible false
             // positive surfaced to the user is safer than silently dropping a
             // real shortage because the confirm check itself errored.
-            confirmed.push({ ...cell, availableQty: null });
+            confirmed.push({ ...run, availableQty: null });
         }
         finally {
             progress.done += 1;
@@ -70,31 +90,32 @@ async function confirmShortageCells(flagged) {
 }
 async function computeShortages() {
     const occupancy = await (0, hiretrack_planning_read_1.getPlanningOccupancyData)();
-    const flagged = findShortageCells(occupancy.types, occupancy.start);
-    const confirmed = await confirmShortageCells(flagged);
+    const flagged = findShortageRuns(occupancy.types, occupancy.start);
+    const confirmed = await confirmShortageRuns(flagged);
     const jobMap = new Map();
-    for (const cell of confirmed) {
-        const contributingLines = occupancy.lines.filter((line) => line.typeId === cell.typeId && line.start <= cell.day && line.end >= cell.day);
+    for (const run of confirmed) {
+        const contributingLines = occupancy.lines.filter((line) => line.typeId === run.typeId && line.start <= run.dayEnd && line.end >= run.dayStart);
         for (const line of contributingLines) {
             let job = jobMap.get(line.jobId);
             if (!job) {
                 job = { jobId: line.jobId, jobRef: line.jobRef, jobTitle: line.jobTitle, shortages: [] };
                 jobMap.set(line.jobId, job);
             }
-            if (!job.shortages.some((s) => s.typeId === cell.typeId && s.day === cell.day)) {
+            if (!job.shortages.some((s) => s.typeId === run.typeId && s.dayStart === run.dayStart && s.dayEnd === run.dayEnd)) {
                 job.shortages.push({
-                    typeId: cell.typeId,
-                    typeName: cell.typeName,
-                    day: cell.day,
-                    booked: cell.booked,
-                    owned: cell.owned,
-                    availableQty: cell.availableQty,
+                    typeId: run.typeId,
+                    typeName: run.typeName,
+                    dayStart: run.dayStart,
+                    dayEnd: run.dayEnd,
+                    booked: run.booked,
+                    owned: run.owned,
+                    availableQty: run.availableQty,
                 });
             }
         }
     }
     const jobs = Array.from(jobMap.values());
-    jobs.forEach((job) => job.shortages.sort((a, b) => a.day.localeCompare(b.day) || a.typeName.localeCompare(b.typeName, 'ru')));
+    jobs.forEach((job) => job.shortages.sort((a, b) => a.dayStart.localeCompare(b.dayStart) || a.typeName.localeCompare(b.typeName, 'ru')));
     jobs.sort((a, b) => a.jobRef.localeCompare(b.jobRef, 'ru'));
     return { generatedAt: new Date().toISOString(), jobs };
 }

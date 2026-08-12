@@ -158,7 +158,7 @@ function renderShortages() {
   const panel = document.getElementById("shortages-panel");
 
   if (state.shortagesLoading && !SHORTAGES) {
-    panel.innerHTML = `<p class="placeholder">Проверяю нехватки через HireTrack (может занять до пары минут)…</p>`;
+    panel.innerHTML = `<p class="placeholder">Проверяю нехватки через HireTrack — см. прогресс выше.</p>`;
     return;
   }
   if (state.shortagesError && !SHORTAGES) {
@@ -178,13 +178,14 @@ function renderShortages() {
   const rows = SHORTAGES.jobs.map((job) => {
     const expanded = state.expandedShortageJobs.has(job.jobId);
     const detailRows = job.shortages
-      .map(
-        (s) => `<div class="shortage-detail-row">
-          <span class="shortage-detail-day">${shortageDayLabel(s.day)}</span>
+      .map((s) => {
+        const range = s.dayStart === s.dayEnd ? shortageDayLabel(s.dayStart) : `${shortageDayLabel(s.dayStart)} – ${shortageDayLabel(s.dayEnd)}`;
+        return `<div class="shortage-detail-row">
+          <span class="shortage-detail-day">${range}</span>
           <span class="shortage-detail-name">${s.typeName}</span>
           <span class="shortage-detail-nums">нужно ${s.booked}, в наличии ${s.owned}${s.availableQty != null ? `, доступно ${s.availableQty}` : ""}</span>
-        </div>`
-      )
+        </div>`;
+      })
       .join("");
     return `<div class="shortage-job${expanded ? " expanded" : ""}">
       <button type="button" class="shortage-job-header" data-action="toggle-shortage-job" data-job="${job.jobId}">

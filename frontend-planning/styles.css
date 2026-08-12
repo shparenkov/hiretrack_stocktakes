@@ -160,7 +160,7 @@ body { height: 100vh; display: flex; flex-direction: column; }
   display: flex; gap: 12px; padding: 4px 0; font-size: 12px; border-bottom: 1px dashed #e4e6ea;
 }
 .shortage-detail-row:last-child { border-bottom: 0; }
-.shortage-detail-day { flex: 0 0 70px; font-weight: 600; color: var(--muted); }
+.shortage-detail-day { flex: 0 0 140px; font-weight: 600; color: var(--muted); }
 .shortage-detail-name { flex: 1 1 auto; }
 .shortage-detail-nums { flex: 0 0 auto; color: #932b20; font-weight: 600; white-space: nowrap; }
 
