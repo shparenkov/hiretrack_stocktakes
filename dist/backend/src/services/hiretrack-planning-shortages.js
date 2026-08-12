@@ -88,8 +88,8 @@ async function confirmShortageRuns(flagged) {
     }));
     return confirmed;
 }
-async function computeShortages() {
-    const occupancy = await (0, hiretrack_planning_read_1.getPlanningOccupancyData)();
+async function computeShortages(window) {
+    const occupancy = await (0, hiretrack_planning_read_1.getPlanningOccupancyData)(window);
     const flagged = findShortageRuns(occupancy.types, occupancy.start);
     const confirmed = await confirmShortageRuns(flagged);
     const jobMap = new Map();
@@ -132,29 +132,45 @@ async function computeShortages() {
 // this codebase (hiretrack-crew-read.ts, hiretrack-planning-read.ts).
 const configuredCacheMs = Number(process.env.PLANNING_SHORTAGES_CACHE_MS || 20 * 60 * 1000);
 const cacheMs = Number.isFinite(configuredCacheMs) ? Math.max(0, configuredCacheMs) : 20 * 60 * 1000;
-let dataCache = null;
-let pendingRead = null;
-function refreshShortagesData() {
-    if (!pendingRead) {
-        pendingRead = computeShortages()
+// Cache keyed by the requested window, same reasoning as
+// hiretrack-planning-read.ts's own occupancy cache - the shared date-filter
+// toolbar can shift the window across all three tabs.
+const dataCache = new Map();
+const pendingReads = new Map();
+const MAX_CACHE_ENTRIES = 20;
+function windowCacheKey(window) {
+    return `${window?.start || ''}:${window?.days ?? ''}`;
+}
+function refreshShortagesData(window, key) {
+    let pending = pendingReads.get(key);
+    if (!pending) {
+        pending = computeShortages(window)
             .then((data) => {
-            dataCache = { expiresAt: Date.now() + cacheMs, data };
+            if (dataCache.size >= MAX_CACHE_ENTRIES && !dataCache.has(key)) {
+                const oldestKey = dataCache.keys().next().value;
+                if (oldestKey !== undefined)
+                    dataCache.delete(oldestKey);
+            }
+            dataCache.set(key, { expiresAt: Date.now() + cacheMs, data });
             return data;
         })
             .finally(() => {
-            pendingRead = null;
+            pendingReads.delete(key);
         });
+        pendingReads.set(key, pending);
     }
-    return pendingRead;
+    return pending;
 }
 async function getPlanningShortagesData(options) {
-    if (options?.forceRefresh || !dataCache) {
-        return refreshShortagesData();
+    const key = windowCacheKey(options);
+    const cached = dataCache.get(key);
+    if (options?.forceRefresh || !cached) {
+        return refreshShortagesData(options, key);
     }
-    if (dataCache.expiresAt <= Date.now()) {
-        void refreshShortagesData().catch((error) => {
+    if (cached.expiresAt <= Date.now()) {
+        void refreshShortagesData(options, key).catch((error) => {
             console.error('Background planning-shortages refresh failed:', error);
         });
     }
-    return dataCache.data;
+    return cached.data;
 }

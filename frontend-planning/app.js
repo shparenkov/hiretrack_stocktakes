@@ -5,7 +5,7 @@ let OCCUPANCY = null; // { start, end, types, lines }
 let SHORTAGES = null; // { generatedAt, jobs }
 let JOBS_GANTT = null; // { generatedAt, jobs }
 let start = new Date();
-let DAY_COUNT = 30;
+let DAY_COUNT = 7;
 
 function daysBetween(a, b) {
   return Math.round((new Date(b) - new Date(a)) / 86400000);
@@ -42,6 +42,7 @@ const state = {
   ganttLoading: false,
   ganttError: null,
   expandedGanttJobs: new Set(),
+  expandedOccupancyTypes: new Set(),
 };
 
 function setWindow(startStr, length) {
@@ -50,9 +51,11 @@ function setWindow(startStr, length) {
   document.documentElement.style.setProperty("--day-count", DAY_COUNT);
 }
 
-// OCCUPANCY.types[].dayTotals is indexed from OCCUPANCY.start (always today
-// at load time), not from the visible window's own `start` - this maps a
-// visible-window day index back into that fixed array.
+// OCCUPANCY.types[].dayTotals is indexed from OCCUPANCY.start, which the
+// server now computes to exactly match the requested window (see
+// loadOccupancy/windowQuery) - this is normally a 0 offset, kept as a
+// defensive re-index rather than assuming array position === visible day
+// in case a render ever runs against not-yet-refreshed data.
 function occupancyDayIndex(iso) {
   return daysBetween(OCCUPANCY.start + "T00:00:00", iso + "T00:00:00");
 }
@@ -93,6 +96,7 @@ function qtyClass(qty, owned) {
 }
 
 function occupancyTypeRow(type) {
+  const expanded = state.expandedOccupancyTypes.has(type.typeId);
   const cells = [];
   for (let i = 0; i < DAY_COUNT; i++) {
     const iso = fmt(addDays(start, i));
@@ -104,11 +108,49 @@ function occupancyTypeRow(type) {
       cells.push(`<div class="day-qty ${qtyClass(qty, type.siteOwns)}">${qty || ""}</div>`);
     }
   }
-  return `<div class="row occupancy-row">
-    <div class="cell col-category">${type.categoryName || "—"}</div>
+  return `<div class="row occupancy-row${expanded ? " expanded" : ""}" data-occupancy-type="${type.typeId}">
+    <div class="cell col-category">
+      <button type="button" class="occupancy-toggle" data-action="toggle-occupancy-type" data-type="${type.typeId}" title="Показать работы, использующие это оборудование">${expanded ? "−" : "+"}</button>
+      ${type.categoryName || "—"}
+    </div>
     <div class="cell col-name">${type.name}</div>
     <div class="cell col-owned">${type.siteOwns == null ? "?" : type.siteOwns}</div>
     <div class="day-cells">${cells.join("")}</div>
+  </div>`;
+}
+
+// Sub-row shown when a type is expanded - one Gantt-style bar per
+// contributing job line (OCCUPANCY.lines already carries jobRef/jobTitle/
+// start/end/qty per type, no extra fetch needed), reusing ganttBarStyle so
+// it lines up with the same day columns crew Bookings/Работы already use.
+// Deliberately reuses the OCCUPANCY row's own grid-template (--left-category/
+// --left-name/--left-owned), not the Gantt tab's (--gantt-left-*), so the
+// bar-track starts exactly under the same day header the type row above it
+// uses.
+function occupancyJobBarRow(line) {
+  const barStart = new Date(line.start + "T00:00:00");
+  const barEnd = new Date(line.end + "T00:00:00");
+  const colStart = daysBetween(start, barStart) + 1;
+  const colEnd = daysBetween(start, barEnd) + 2;
+  const clampedStart = Math.max(colStart, 1);
+  const clampedEnd = Math.min(colEnd, DAY_COUNT + 1);
+  const truncStart = colStart < 1;
+  const truncEnd = colEnd > DAY_COUNT + 1;
+  const overlaps = clampedStart < clampedEnd;
+  const barHtml = overlaps
+    ? `<div class="gantt-bar occ-job-bar${truncStart ? " trunc-start" : ""}${truncEnd ? " trunc-end" : ""}" style="${ganttBarStyle(clampedStart, clampedEnd, DAY_W)}" title="${line.jobRef}: ${line.start} → ${line.end}, ${line.qty} шт.">
+        ${truncStart ? `<span class="trunc-marker left">&laquo;</span>` : ""}
+        ${truncEnd ? `<span class="trunc-marker right">&raquo;</span>` : ""}
+      </div>`
+    : "";
+  return `<div class="row occupancy-job-row">
+    <div class="cell col-category"></div>
+    <div class="cell col-name occupancy-job-name">
+      <a class="occupancy-job-link" href="/create-job/?job=${encodeURIComponent(line.jobRef)}" target="_blank" rel="noopener">${line.jobRef}</a>
+      <span class="occupancy-job-title">${line.jobTitle}</span>
+    </div>
+    <div class="cell col-owned">${line.qty}</div>
+    <div class="gantt-bar-track" style="grid-column: 4 / -1;">${barHtml}</div>
   </div>`;
 }
 
@@ -141,33 +183,55 @@ function renderOccupancy() {
   }
 
   const rows = [occupancyHeaderRow()];
-  rows.push(...types.map(occupancyTypeRow));
+  for (const type of types) {
+    rows.push(occupancyTypeRow(type));
+    if (state.expandedOccupancyTypes.has(type.typeId)) {
+      const lines = OCCUPANCY.lines.filter((l) => l.typeId === type.typeId).sort((a, b) => a.start.localeCompare(b.start));
+      if (lines.length === 0) {
+        rows.push(`<div class="occupancy-job-row-empty">Нет работ, использующих это оборудование в текущем периоде.</div>`);
+      } else {
+        rows.push(...lines.map(occupancyJobBarRow));
+      }
+    }
+  }
   panel.innerHTML = rows.join("");
 }
+
+document.getElementById("occupancy-panel").addEventListener("click", (ev) => {
+  const link = ev.target.closest(".occupancy-job-link");
+  if (link) return; // let the link navigate normally
+  const btn = ev.target.closest("button[data-action='toggle-occupancy-type']");
+  if (!btn) return;
+  const typeId = Number(btn.dataset.type);
+  if (state.expandedOccupancyTypes.has(typeId)) state.expandedOccupancyTypes.delete(typeId);
+  else state.expandedOccupancyTypes.add(typeId);
+  renderOccupancy();
+});
 
 function render() {
   document.getElementById("occupancy-panel").classList.toggle("hidden", state.activeTab !== "occupancy");
   document.getElementById("shortages-panel").classList.toggle("hidden", state.activeTab !== "shortages");
   document.getElementById("jobs-panel").classList.toggle("hidden", state.activeTab !== "jobs");
-  document.getElementById("occupancy-toolbar").classList.toggle("hidden", state.activeTab !== "occupancy");
+  // The date-window toolbar itself (#window-toolbar) stays visible on every
+  // tab - it's one shared filter driving all three modules. Only the two
+  // occupancy-specific sub-controls (category filter, "только с нехваткой")
+  // are tab-conditional.
+  document.getElementById("occupancy-only-filters").classList.toggle("hidden", state.activeTab !== "occupancy");
 
   if (state.activeTab === "occupancy") renderOccupancy();
   if (state.activeTab === "shortages") renderShortages();
   if (state.activeTab === "jobs") renderJobsGantt();
 }
 
-// Jobs Gantt has no window controls of its own - it auto-fits its day
-// range to the loaded jobs' own min(start)/max(end) instead, since (unlike
-// occupancy's fixed 60-day horizon) job spans vary wildly and there's no
-// single "today-relative" window that makes sense to default to.
+// Jobs Gantt uses the SAME shared date-window as Занятость/Nехватки (the
+// #window-toolbar's start/DAY_COUNT) rather than auto-fitting to whatever
+// jobs happen to be loaded - per explicit user request, the date filter is
+// one unified control across all three tabs. JOBS_GANTT itself still comes
+// from an unbounded fetch (the full future pipeline, not just the visible
+// window - see hiretrack_planning_read.py's read_jobs_gantt), so shifting
+// the window here is a pure re-render, no re-fetch needed.
 function ganttWindow() {
-  if (!JOBS_GANTT || JOBS_GANTT.jobs.length === 0) return null;
-  const starts = JOBS_GANTT.jobs.map((j) => new Date(j.start + "T00:00:00"));
-  const ends = JOBS_GANTT.jobs.map((j) => new Date(j.end + "T00:00:00"));
-  const winStart = new Date(Math.min(...starts));
-  const winEnd = new Date(Math.max(...ends));
-  const count = daysBetween(winStart, winEnd) + 1;
-  return { winStart, count: Math.max(1, count) };
+  return { winStart: start, count: DAY_COUNT };
 }
 
 function ganttBarStyle(colStart, colEnd, dayW) {
@@ -195,8 +259,13 @@ function renderGanttBarRow(id, refLabel, titleLabel, barStart, barEnd, winStart,
   const colEnd = daysBetween(winStart, barEnd) + 2;
   const clampedStart = Math.max(colStart, 1);
   const clampedEnd = Math.min(colEnd, count + 1);
+  const truncStart = colStart < 1;
+  const truncEnd = colEnd > count + 1;
   const barHtml = clampedStart < clampedEnd
-    ? `<div class="gantt-bar${extraBarClass ? " " + extraBarClass : ""}" style="${ganttBarStyle(clampedStart, clampedEnd, DAY_W)}" title="${refLabel}: ${fmt(barStart)} → ${fmt(barEnd)}"></div>`
+    ? `<div class="gantt-bar${extraBarClass ? " " + extraBarClass : ""}${truncStart ? " trunc-start" : ""}${truncEnd ? " trunc-end" : ""}" style="${ganttBarStyle(clampedStart, clampedEnd, DAY_W)}" title="${refLabel}: ${fmt(barStart)} → ${fmt(barEnd)}">
+        ${truncStart ? `<span class="trunc-marker left">&laquo;</span>` : ""}
+        ${truncEnd ? `<span class="trunc-marker right">&raquo;</span>` : ""}
+      </div>`
     : "";
   return `<div class="gantt-row${extraRowClass ? " " + extraRowClass : ""}" style="grid-template-columns: var(--gantt-left-toggle) var(--gantt-left-ref) var(--gantt-left-title) repeat(${count}, var(--day-w));" data-gantt-job="${id}">
     <div class="gantt-cell toggle"></div>
@@ -218,13 +287,29 @@ function renderJobsGantt() {
     return;
   }
   const win = ganttWindow();
-  if (!JOBS_GANTT || !win) {
-    panel.innerHTML = `<p class="placeholder">Нет работ в горизонте планирования.</p>`;
+  if (!JOBS_GANTT) {
+    panel.innerHTML = `<p class="placeholder">Нет данных.</p>`;
+    return;
+  }
+
+  // Only render jobs whose own [start, end] overlaps the current shared
+  // window - JOBS_GANTT itself holds the full future pipeline (unbounded
+  // fetch), so without this a 7-day window would still list all 72+ jobs
+  // with empty bars.
+  const winEnd = addDays(win.winStart, win.count - 1);
+  const visibleJobs = JOBS_GANTT.jobs.filter((job) => {
+    const jobStart = new Date(job.start + "T00:00:00");
+    const jobEnd = new Date(job.end + "T00:00:00");
+    return jobStart <= winEnd && jobEnd >= win.winStart;
+  });
+
+  if (visibleJobs.length === 0) {
+    panel.innerHTML = `<p class="placeholder">Нет работ в текущем периоде.</p>`;
     return;
   }
 
   const rows = [renderGanttHeader(win.winStart, win.count)];
-  for (const job of JOBS_GANTT.jobs) {
+  for (const job of visibleJobs) {
     const expanded = state.expandedGanttJobs.has(job.jobId);
     const jobStart = new Date(job.start + "T00:00:00");
     const jobEnd = new Date(job.end + "T00:00:00");
@@ -444,9 +529,22 @@ function stopShortagesProgressPolling() {
   shortagesProgressEl.classList.add("hidden");
 }
 
+// Builds the shared-window query string every planning endpoint accepts
+// (start/days) - defaults to the CURRENT shared window (module-level
+// start/DAY_COUNT) when the caller doesn't override it, so most call sites
+// don't need to pass start/days explicitly at all.
+function windowQuery(options) {
+  const opts = options || {};
+  const params = new URLSearchParams({
+    start: opts.start || fmt(start),
+    days: String(opts.days != null ? opts.days : DAY_COUNT),
+  });
+  if (opts.forceRefresh) params.set("refresh", "1");
+  return params.toString();
+}
+
 async function loadShortages(options) {
-  const forceRefresh = options && options.forceRefresh;
-  const url = forceRefresh ? "/api/planning/shortages?refresh=1" : "/api/planning/shortages";
+  const url = `/api/planning/shortages?${windowQuery(options)}`;
   state.shortagesLoading = true;
   state.shortagesError = null;
   renderShortages();
@@ -482,8 +580,7 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
 });
 
 async function loadOccupancy(options) {
-  const forceRefresh = options && options.forceRefresh;
-  const url = forceRefresh ? "/api/planning/occupancy?refresh=1" : "/api/planning/occupancy";
+  const url = `/api/planning/occupancy?${windowQuery(options)}`;
   const resp = await fetch(url);
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
@@ -534,11 +631,32 @@ function markActivePreset() {
   presetButtons.forEach((b) => b.classList.toggle("active", Number(b.dataset.days) === DAY_COUNT));
 }
 
-function applyWindow(startStr, length) {
+// Shifting the shared window (back/forward day/week, a preset, or typing a
+// date) now refetches occupancy - and shortages too, if that tab has
+// already been opened at least once - since both are server-side windowed
+// (see hiretrack_planning_read.py), not just re-sliced from a wider
+// pre-fetched range. Jobs Gantt needs no re-fetch (its own data is an
+// unbounded fetch already) - render() alone picks up the new window there.
+async function applyWindow(startStr, length) {
   setWindow(startStr, length);
   windowStartInput.value = startStr;
   updateStartDisplay(startStr);
   markActivePreset();
+
+  const loadStatus = document.getElementById("load-status");
+  loadStatus.textContent = "Обновляю данные для выбранного периода…";
+  loadStatus.classList.remove("error");
+  loadStatus.style.display = "";
+  try {
+    const tasks = [loadOccupancy()];
+    if (SHORTAGES !== null) tasks.push(loadShortages());
+    await Promise.all(tasks);
+    loadStatus.style.display = "none";
+  } catch (e) {
+    console.error(e);
+    loadStatus.textContent = "Не удалось обновить данные: " + e.message;
+    loadStatus.classList.add("error");
+  }
   render();
 }
 
@@ -574,16 +692,7 @@ document.getElementById("shortage-only").addEventListener("change", (ev) => {
 });
 
 async function boot() {
-  const loadStatus = document.getElementById("load-status");
-  try {
-    await loadOccupancy();
-    loadStatus.style.display = "none";
-  } catch (e) {
-    console.error(e);
-    loadStatus.textContent = "Не удалось загрузить данные из HireTrack: " + e.message;
-    loadStatus.classList.add("error");
-  }
-  applyWindow(todayStr(), DAY_COUNT);
+  await applyWindow(todayStr(), DAY_COUNT);
 }
 
 boot();

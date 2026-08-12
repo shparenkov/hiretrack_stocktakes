@@ -75,31 +75,52 @@ function runPlanningOdbcRead(request) {
 // assignment - default TTL is minutes, not seconds.
 const configuredCacheMs = Number(process.env.PLANNING_ODBC_CACHE_MS || 300000);
 const cacheMs = Number.isFinite(configuredCacheMs) ? Math.max(0, configuredCacheMs) : 300000;
-let dataCache = null;
-let pendingRead = null;
-function refreshOccupancyData() {
-    if (!pendingRead) {
-        pendingRead = runPlanningOdbcRead({ operation: 'equipment-occupancy' })
+// Cache keyed by the requested window (start+days) - the shared date-filter
+// toolbar can shift the window across all three tabs, so a single-slot
+// cache would otherwise serve stale data from a different range. Bounded
+// with a simple size cap since windows are user-driven, not unbounded.
+const dataCache = new Map();
+const pendingReads = new Map();
+const MAX_CACHE_ENTRIES = 20;
+function windowCacheKey(window) {
+    return `${window?.start || ''}:${window?.days ?? ''}`;
+}
+function refreshOccupancyData(window, key) {
+    let pending = pendingReads.get(key);
+    if (!pending) {
+        pending = runPlanningOdbcRead({
+            operation: 'equipment-occupancy',
+            start: window?.start,
+            days: window?.days,
+        })
             .then((data) => {
-            dataCache = { expiresAt: Date.now() + cacheMs, data };
+            if (dataCache.size >= MAX_CACHE_ENTRIES && !dataCache.has(key)) {
+                const oldestKey = dataCache.keys().next().value;
+                if (oldestKey !== undefined)
+                    dataCache.delete(oldestKey);
+            }
+            dataCache.set(key, { expiresAt: Date.now() + cacheMs, data });
             return data;
         })
             .finally(() => {
-            pendingRead = null;
+            pendingReads.delete(key);
         });
+        pendingReads.set(key, pending);
     }
-    return pendingRead;
+    return pending;
 }
 async function getPlanningOccupancyData(options) {
-    if (options?.forceRefresh || !dataCache) {
-        return refreshOccupancyData();
+    const key = windowCacheKey(options);
+    const cached = dataCache.get(key);
+    if (options?.forceRefresh || !cached) {
+        return refreshOccupancyData(options, key);
     }
-    if (dataCache.expiresAt <= Date.now()) {
-        void refreshOccupancyData().catch((error) => {
+    if (cached.expiresAt <= Date.now()) {
+        void refreshOccupancyData(options, key).catch((error) => {
             console.error('Background planning-occupancy refresh failed:', error);
         });
     }
-    return dataCache.data;
+    return cached.data;
 }
 let ganttCache = null;
 let pendingGanttRead = null;

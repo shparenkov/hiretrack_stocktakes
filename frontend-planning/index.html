@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <title>Планирование — HireTrack NX</title>
-  <link rel="stylesheet" href="styles.css?v=3" />
+  <link rel="stylesheet" href="styles.css?v=4" />
 </head>
 <body>
   <div class="toolbar">
@@ -15,7 +15,9 @@
     </nav>
     <button id="refresh-data" title="Перечитать данные из HireTrack">Обновить</button>
   </div>
-  <div class="toolbar toolbar-window" id="occupancy-toolbar">
+  <!-- Shared across all three tabs on purpose - one date window drives
+       Занятость/Nехватки/Работы rather than each tab having its own. -->
+  <div class="toolbar toolbar-window" id="window-toolbar">
     <label class="window-field">Начальная дата
       <span class="window-field-row">
         <button type="button" id="window-back-week" class="nav-btn" title="Назад на неделю">&laquo;</button>
@@ -33,13 +35,15 @@
       <button class="preset-btn" data-days="30">30д</button>
       <button class="preset-btn" data-days="60">60д</button>
     </span>
-    <label class="window-field">Категория
-      <input type="text" id="category-filter" placeholder="Фильтр по категории/названию…" autocomplete="off" />
-    </label>
-    <label class="window-field checkbox-field">
-      <input type="checkbox" id="shortage-only" />
-      Только с нехваткой
-    </label>
+    <span id="occupancy-only-filters" class="occupancy-only-filters">
+      <label class="window-field">Категория
+        <input type="text" id="category-filter" placeholder="Фильтр по категории/названию…" autocomplete="off" />
+      </label>
+      <label class="window-field checkbox-field">
+        <input type="checkbox" id="shortage-only" />
+        Только с нехваткой
+      </label>
+    </span>
   </div>
   <div id="load-status" class="load-status">Загрузка данных из HireTrack…</div>
   <div id="shortages-progress" class="shortages-progress hidden">
@@ -51,6 +55,6 @@
     <div id="shortages-panel" class="panel hidden"></div>
     <div id="jobs-panel" class="panel hidden"></div>
   </div>
-  <script src="app.js?v=3"></script>
+  <script src="app.js?v=4"></script>
 </body>
 </html>

@@ -244,3 +244,32 @@ body { height: 100vh; display: flex; flex-direction: column; }
 }
 .gantt-bar { position: absolute; top: 5px; bottom: 5px; border: 1px solid #1f4468; background: var(--blue); }
 .gantt-bar.phase { background: var(--blue-light); border: 1px solid var(--blue); top: 4px; bottom: 4px; }
+.gantt-bar.occ-job-bar { background: #3d7a52; border: 1px solid #1f4f30; }
+
+.trunc-marker {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  color: #fff; font-weight: 700; font-size: 13px; line-height: 1;
+}
+.trunc-marker.left { left: 3px; }
+.trunc-marker.right { right: 3px; }
+
+.occupancy-only-filters { display: flex; gap: 16px; align-items: flex-end; }
+.occupancy-only-filters.hidden { display: none; }
+
+.row .cell.col-category { display: flex; align-items: center; gap: 6px; }
+.occupancy-toggle {
+  flex: 0 0 auto; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center;
+  border: 1px solid #7a828c; background: #fff; cursor: pointer; font-size: 11px; font-weight: 700; padding: 0;
+}
+.occupancy-toggle:hover { background: var(--bg-alt); }
+.row.occupancy-row.expanded .cell { background: #eef6f0; }
+
+.occupancy-job-row .cell.col-category { background: #fbfbfc; }
+.occupancy-job-row .cell.col-name.occupancy-job-name {
+  background: #fbfbfc; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 1px; padding: 4px 8px;
+}
+.occupancy-job-link { font-size: 11px; font-weight: 700; color: var(--blue); text-decoration: none; }
+.occupancy-job-link:hover { text-decoration: underline; }
+.occupancy-job-title { font-size: 10px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.occupancy-job-row .cell.col-owned { background: #fbfbfc; font-size: 11px; color: var(--muted); }
+.occupancy-job-row-empty { padding: 8px 14px 8px 42px; color: var(--muted); font-size: 12px; font-style: italic; border-bottom: 1px solid var(--border); }

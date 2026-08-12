@@ -1,5 +1,5 @@
 import { checkHiretrackAvailability } from './hiretrack-booking-api';
-import { getPlanningOccupancyData, PlanningOccupancyType } from './hiretrack-planning-read';
+import { getPlanningOccupancyData, PlanningOccupancyType, PlanningOccupancyWindow } from './hiretrack-planning-read';
 
 // Two-tier shortage detection, per the Phase 4 plan: a free "cheap pass"
 // over data the occupancy op already computed (Whlevel.SiteOwns isn't
@@ -144,8 +144,8 @@ async function confirmShortageRuns(flagged: FlaggedRun[]): Promise<ConfirmedRun[
   return confirmed;
 }
 
-async function computeShortages(): Promise<PlanningShortagesData> {
-  const occupancy = await getPlanningOccupancyData();
+async function computeShortages(window: PlanningOccupancyWindow | undefined): Promise<PlanningShortagesData> {
+  const occupancy = await getPlanningOccupancyData(window);
   const flagged = findShortageRuns(occupancy.types, occupancy.start);
   const confirmed = await confirmShortageRuns(flagged);
 
@@ -194,31 +194,50 @@ async function computeShortages(): Promise<PlanningShortagesData> {
 // this codebase (hiretrack-crew-read.ts, hiretrack-planning-read.ts).
 const configuredCacheMs = Number(process.env.PLANNING_SHORTAGES_CACHE_MS || 20 * 60 * 1000);
 const cacheMs = Number.isFinite(configuredCacheMs) ? Math.max(0, configuredCacheMs) : 20 * 60 * 1000;
-let dataCache: { expiresAt: number; data: PlanningShortagesData } | null = null;
-let pendingRead: Promise<PlanningShortagesData> | null = null;
 
-function refreshShortagesData(): Promise<PlanningShortagesData> {
-  if (!pendingRead) {
-    pendingRead = computeShortages()
+// Cache keyed by the requested window, same reasoning as
+// hiretrack-planning-read.ts's own occupancy cache - the shared date-filter
+// toolbar can shift the window across all three tabs.
+const dataCache = new Map<string, { expiresAt: number; data: PlanningShortagesData }>();
+const pendingReads = new Map<string, Promise<PlanningShortagesData>>();
+const MAX_CACHE_ENTRIES = 20;
+
+function windowCacheKey(window?: PlanningOccupancyWindow): string {
+  return `${window?.start || ''}:${window?.days ?? ''}`;
+}
+
+function refreshShortagesData(window: PlanningOccupancyWindow | undefined, key: string): Promise<PlanningShortagesData> {
+  let pending = pendingReads.get(key);
+  if (!pending) {
+    pending = computeShortages(window)
       .then((data) => {
-        dataCache = { expiresAt: Date.now() + cacheMs, data };
+        if (dataCache.size >= MAX_CACHE_ENTRIES && !dataCache.has(key)) {
+          const oldestKey = dataCache.keys().next().value;
+          if (oldestKey !== undefined) dataCache.delete(oldestKey);
+        }
+        dataCache.set(key, { expiresAt: Date.now() + cacheMs, data });
         return data;
       })
       .finally(() => {
-        pendingRead = null;
+        pendingReads.delete(key);
       });
+    pendingReads.set(key, pending);
   }
-  return pendingRead;
+  return pending;
 }
 
-export async function getPlanningShortagesData(options?: { forceRefresh?: boolean }): Promise<PlanningShortagesData> {
-  if (options?.forceRefresh || !dataCache) {
-    return refreshShortagesData();
+export async function getPlanningShortagesData(
+  options?: { forceRefresh?: boolean } & PlanningOccupancyWindow,
+): Promise<PlanningShortagesData> {
+  const key = windowCacheKey(options);
+  const cached = dataCache.get(key);
+  if (options?.forceRefresh || !cached) {
+    return refreshShortagesData(options, key);
   }
-  if (dataCache.expiresAt <= Date.now()) {
-    void refreshShortagesData().catch((error) => {
+  if (cached.expiresAt <= Date.now()) {
+    void refreshShortagesData(options, key).catch((error) => {
       console.error('Background planning-shortages refresh failed:', error);
     });
   }
-  return dataCache.data;
+  return cached.data;
 }

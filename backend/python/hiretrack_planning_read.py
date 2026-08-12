@@ -64,27 +64,28 @@ def read_defcon(cursor):
     return text_by_status, rank_by_status
 
 
-def find_active_jobs(cursor, today, horizon_end=None):
-    # Narrow to real, still-relevant jobs FIRST (same "Due Back" >= today
+def find_active_jobs(cursor, window_start, horizon_end=None):
+    # Narrow to real, still-relevant jobs FIRST (same "Due Back" >= <date>
     # heuristic hiretrack_crew_read.py already validated live for this
-    # purpose) before touching Sort/Eqlists at all - confirmed live this
-    # session that scanning the whole Sort table (INNER JOIN Eqlists/Jobs,
-    # filtering by S.D1/D2 directly) times out well past 240s, presumably a
-    # full scan over years of historical bookings with no usable index on
-    # D1/D2. Jobs.Due Out/Due Back aren't perfectly kept in sync with an
-    # individual Eqlist's own DateOut/DateBack (see
-    # EQUIPMENT_CATALOG_MATCH_BLUEPRINT.md), so this is a coarse pre-filter
-    # only - callers needing exact per-day attribution still use each Sort
-    # line's own D1/D2.
+    # purpose, generalized from "today" to any requested window_start so a
+    # shifted date filter re-queries instead of just re-slicing stale data)
+    # before touching Sort/Eqlists at all - confirmed live this session that
+    # scanning the whole Sort table (INNER JOIN Eqlists/Jobs, filtering by
+    # S.D1/D2 directly) times out well past 240s, presumably a full scan
+    # over years of historical bookings with no usable index on D1/D2.
+    # Jobs.Due Out/Due Back aren't perfectly kept in sync with an individual
+    # Eqlist's own DateOut/DateBack (see EQUIPMENT_CATALOG_MATCH_BLUEPRINT.md),
+    # so this is a coarse pre-filter only - callers needing exact per-day
+    # attribution still use each Sort line's own D1/D2.
     #
     # horizon_end, when given, also caps "Due Out" - narrows which jobs get
     # pulled into the (potentially large) Eqlists/Sort IN-clause fetches
     # that follow, not just which days get displayed. Per explicit user
-    # request: occupancy/shortages only need jobs starting within the next
-    # HORIZON_DAYS, not every future job regardless of how far out it
+    # request: occupancy/shortages only need jobs starting within the
+    # requested window, not every future job regardless of how far out it
     # starts. jobs-gantt calls this without horizon_end - it wants the full
-    # future pipeline, not just next week.
-    params = list(REAL_JOB_STATUSES) + [today]
+    # future pipeline, not just the current window.
+    params = list(REAL_JOB_STATUSES) + [window_start]
     horizon_clause = ""
     if horizon_end is not None:
         horizon_clause = ' AND "Due Out" <= ?'
@@ -114,13 +115,21 @@ def find_active_jobs(cursor, today, horizon_end=None):
     }
 
 
-def read_equipment_occupancy(cursor):
-    today = date.today()
-    horizon_end = today + timedelta(days=HORIZON_DAYS)
-    days = day_range(today, horizon_end)
+def read_equipment_occupancy(cursor, window_start=None, window_days=None):
+    # window_start/window_days let the caller request any date range (the
+    # frontend's shared date-filter toolbar can shift left/right across all
+    # three tabs) - defaults preserve the original "today, HORIZON_DAYS"
+    # behavior when the caller doesn't ask for a specific window.
+    start_date = window_start or date.today()
+    span = window_days if window_days is not None else HORIZON_DAYS
+    horizon_end = start_date + timedelta(days=span - 1 if span > 0 else 0)
+    days = day_range(start_date, horizon_end)
     day_index = {d: i for i, d in enumerate(days)}
 
-    job_by_no = find_active_jobs(cursor, today, horizon_end)
+    # Jobs still relevant to THIS window - "Due Back >= start_date" (not
+    # "today"), since a window shifted into the future shouldn't pull in
+    # jobs that already finished before that window starts.
+    job_by_no = find_active_jobs(cursor, start_date, horizon_end)
     job_nos = list(job_by_no.keys())
 
     rows = []
@@ -147,7 +156,7 @@ def read_equipment_occupancy(cursor):
                 """,
                 *eqlist_nos,
                 horizon_end,
-                today,
+                start_date,
             )
             for r in cursor.fetchall():
                 job_no = eqlist_job.get(r.EqlNo)
@@ -211,7 +220,7 @@ def read_equipment_occupancy(cursor):
     lines = []
     for r in rows:
         raw_d1, raw_d2 = r["d1"], r["d2"]
-        d1 = max(raw_d1.date() if hasattr(raw_d1, "date") else raw_d1, today)
+        d1 = max(raw_d1.date() if hasattr(raw_d1, "date") else raw_d1, start_date)
         d2 = min(raw_d2.date() if hasattr(raw_d2, "date") else raw_d2, horizon_end)
         if d1 > d2:
             continue
@@ -250,7 +259,7 @@ def read_equipment_occupancy(cursor):
     types_out.sort(key=lambda t: (t["categoryName"], t["name"]))
 
     return {
-        "start": today.isoformat(),
+        "start": start_date.isoformat(),
         "end": horizon_end.isoformat(),
         "types": types_out,
         "lines": lines,
@@ -337,7 +346,10 @@ def main():
     try:
         cursor = connection.cursor()
         if operation == "equipment-occupancy":
-            result = read_equipment_occupancy(cursor)
+            raw_start = request.get("start")
+            window_start = date.fromisoformat(raw_start) if raw_start else None
+            window_days = request.get("days")
+            result = read_equipment_occupancy(cursor, window_start, window_days)
         elif operation == "jobs-gantt":
             result = read_jobs_gantt(cursor)
         else:
