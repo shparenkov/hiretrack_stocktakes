@@ -10,9 +10,11 @@ const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const crew_bookings_1 = require("./routes/crew-bookings");
 const create_job_1 = require("./routes/create-job");
+const planning_1 = require("./routes/planning");
 const tickets_1 = require("./routes/tickets");
 const crew_bookings_pin_auth_1 = require("./services/crew-bookings-pin-auth");
 const create_job_pin_auth_1 = require("./services/create-job-pin-auth");
+const planning_pin_auth_1 = require("./services/planning-pin-auth");
 const bitrix_ticket_app_1 = require("./services/bitrix-ticket-app");
 const password_auth_1 = require("./services/password-auth");
 const portal_page_1 = require("./services/portal-page");
@@ -53,6 +55,13 @@ function createApp() {
         res.sendFile(path_1.default.join(createJobFrontendPath, 'index.html'));
     });
     app.use('/create-job', express_1.default.static(createJobFrontendPath, { index: false, redirect: false }));
+    (0, planning_pin_auth_1.installPlanningPinAuth)(app);
+    app.use('/api/planning', planning_1.planningRouter);
+    const planningFrontendPath = path_1.default.resolve(process.cwd(), 'frontend-planning');
+    app.get('/planning/', (_req, res) => {
+        res.sendFile(path_1.default.join(planningFrontendPath, 'index.html'));
+    });
+    app.use('/planning', express_1.default.static(planningFrontendPath, { index: false, redirect: false }));
     app.all(['/bitrix/tickets/app', '/bitrix/tickets/install'], (_req, res) => {
         const uiPath = '/bitrix/tickets/ui/';
         res.type('html').send((0, bitrix_ticket_app_1.renderBitrixTicketsAppShell)({ uiPath }));
