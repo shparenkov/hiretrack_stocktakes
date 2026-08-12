@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <title>Планирование — HireTrack NX</title>
+  <link rel="stylesheet" href="styles.css?v=1" />
+</head>
+<body>
+  <div class="toolbar">
+    <h1>Планирование</h1>
+    <nav class="tabs">
+      <button type="button" class="tab-btn active" data-tab="occupancy">Занятость</button>
+      <button type="button" class="tab-btn" data-tab="shortages">Нехватки</button>
+      <button type="button" class="tab-btn" data-tab="jobs">Работы</button>
+    </nav>
+    <button id="refresh-data" title="Перечитать данные из HireTrack">Обновить</button>
+  </div>
+  <div class="toolbar toolbar-window" id="occupancy-toolbar">
+    <label class="window-field">Начальная дата
+      <span class="window-field-row">
+        <button type="button" id="window-back-week" class="nav-btn" title="Назад на неделю">&laquo;</button>
+        <button type="button" id="window-back-day" class="nav-btn" title="Назад на день">&lsaquo;</button>
+        <input type="date" id="window-start" />
+        <span id="window-start-display" class="date-display"></span>
+        <button type="button" id="window-fwd-day" class="nav-btn" title="Вперёд на день">&rsaquo;</button>
+        <button type="button" id="window-fwd-week" class="nav-btn" title="Вперёд на неделю">&raquo;</button>
+      </span>
+    </label>
+    <button id="window-today">Сегодня</button>
+    <span class="window-presets">
+      <button class="preset-btn" data-days="7">7д</button>
+      <button class="preset-btn" data-days="14">14д</button>
+      <button class="preset-btn" data-days="30">30д</button>
+      <button class="preset-btn" data-days="60">60д</button>
+    </span>
+    <label class="window-field">Категория
+      <input type="text" id="category-filter" placeholder="Фильтр по категории/названию…" autocomplete="off" />
+    </label>
+    <label class="window-field checkbox-field">
+      <input type="checkbox" id="shortage-only" />
+      Только с нехваткой
+    </label>
+  </div>
+  <div id="load-status" class="load-status">Загрузка данных из HireTrack…</div>
+  <div class="gantt-scroll">
+    <div id="occupancy-panel" class="panel"></div>
+    <div id="shortages-panel" class="panel hidden"></div>
+    <div id="jobs-panel" class="panel hidden"></div>
+  </div>
+  <script src="app.js?v=1"></script>
+</body>
+</html>
