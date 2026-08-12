@@ -769,6 +769,42 @@
     return wrap;
   }
 
+  // related.Mastertype/Subtype accessory pairs already ride along on every
+  // catalog item (state.catalogById.get(typeId).accessories - see
+  // hiretrack-equipment-catalog.ts/DB_QUERY_REFERENCE.md) - no extra fetch
+  // needed. Suggests only accessories not already present anywhere on this
+  // Eqlist (any section), so re-adding the same master type twice doesn't
+  // re-suggest an accessory the job already has.
+  function computeAccessorySuggestions(loadedJob, typeId) {
+    const catalogItem = state.catalogById.get(typeId);
+    if (!catalogItem || !catalogItem.accessories || catalogItem.accessories.length === 0) return [];
+    const presentTypeIds = new Set(loadedJob.existingLines.map((l) => l.typeId));
+    return catalogItem.accessories.filter((a) => !presentTypeIds.has(a.subtypeId));
+  }
+
+  function buildAccessorySuggestionsNode(loadedJob, section, suggestions) {
+    if (suggestions.length === 0) return null;
+    const wrap = document.createElement('div');
+    wrap.className = 'accessory-suggestions';
+    suggestions.forEach((accessory) => {
+      const row = document.createElement('div');
+      row.className = `accessory-suggestion-row${accessory.required ? ' required' : ''}`;
+      const label = accessory.required ? 'Обязательный аксессуар' : 'Рекомендуем также';
+      const name = accessory.subtypeName || `#${accessory.subtypeId}`;
+      row.innerHTML = `
+        <span class="accessory-suggestion-text">${label}: ${name} (обычно ${accessory.quantity} шт.)</span>
+        <button type="button" class="accessory-suggestion-add">Добавить</button>
+      `;
+      row.querySelector('.accessory-suggestion-add').addEventListener('click', () => {
+        row.remove();
+        if (!wrap.querySelector('.accessory-suggestion-row')) wrap.remove();
+        addEquipmentToSection(loadedJob, section, accessory.subtypeId, accessory.quantity);
+      });
+      wrap.appendChild(row);
+    });
+    return wrap;
+  }
+
   // Inserts a just-written line directly into the DOM at the end of its
   // section - no refetch/full tree rebuild. catalogById already has this
   // line's name/type (it was just shown as a search result), and its
@@ -799,6 +835,8 @@
       // lines" falls out naturally from DOM append order.
       sectionEl.appendChild(lineEl);
       if (componentsEl) sectionEl.appendChild(componentsEl);
+      const suggestionsEl = buildAccessorySuggestionsNode(loadedJob, section, computeAccessorySuggestions(loadedJob, line.typeId));
+      if (suggestionsEl) sectionEl.appendChild(suggestionsEl);
     }
 
     const searchInput = existingLinesTreeEl.querySelector(`.section-add[data-section-id="${section.sectionId}"] .section-add-search`);

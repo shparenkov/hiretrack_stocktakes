@@ -314,6 +314,31 @@ main {
   border-top: 1px solid #eef2f5;
 }
 
+.accessory-suggestions {
+  padding: 4px 10px 4px 34px;
+  border-top: 1px dashed #eef2f5;
+}
+.accessory-suggestion-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.accessory-suggestion-row.required { color: var(--yellow); font-weight: 600; }
+.accessory-suggestion-text { flex: 1; }
+.accessory-suggestion-add {
+  flex: 0 0 auto;
+  border: 1px solid var(--border, #d0d5db);
+  background: #fff;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.accessory-suggestion-add:hover { background: #f2f3f5; }
+
 .section-add {
   position: relative;
   padding: 8px 10px 8px 22px;
