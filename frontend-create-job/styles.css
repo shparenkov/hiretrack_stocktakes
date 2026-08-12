@@ -516,7 +516,14 @@ main {
    lifted from the Daybook (План склада) page's .job card: white card,
    left accent border, soft shadow, bold navy title, muted meta line. No
    progress bar/expand here (that's Daybook-specific equipment-return
-   tracking) - just enough to identify and jump to a job. */
+   tracking) - just enough to identify and jump to a job.
+   Daybook's own .jobs-grid has no grid-template-columns either - its cards
+   only read as compact rectangles because they sit inside a narrower
+   3-column ".days" wrapper. This page has no such wrapper, so the same
+   single-column grid stretched each card to the full 900px content width -
+   a long thin bar, not a rectangular card. Explicit columns here recreate
+   the intended shape directly instead of relying on an outer layout that
+   doesn't exist on this page. */
 .recent-jobs-label {
   margin: 16px 0 8px;
   color: var(--muted);
@@ -526,7 +533,7 @@ main {
   letter-spacing: .04em;
 }
 
-.recent-jobs-grid { display: grid; gap: 10px; }
+.recent-jobs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
 
 .job-card {
   display: block;
