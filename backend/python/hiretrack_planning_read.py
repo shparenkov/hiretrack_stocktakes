@@ -44,25 +44,21 @@ def day_range(start, end):
     return days
 
 
-def read_equipment_occupancy(cursor):
-    today = date.today()
-    horizon_end = today + timedelta(days=HORIZON_DAYS)
-    days = day_range(today, horizon_end)
-    day_index = {d: i for i, d in enumerate(days)}
-
+def find_active_jobs(cursor, today):
     # Narrow to real, still-relevant jobs FIRST (same "Due Back" >= today
     # heuristic hiretrack_crew_read.py already validated live for this
-    # purpose) before touching Sort at all - confirmed live this session
-    # that scanning the whole Sort table (INNER JOIN Eqlists/Jobs, filtering
-    # by S.D1/D2 directly) times out well past 240s, presumably a full scan
-    # over years of historical bookings with no usable index on D1/D2.
-    # Jobs.Due Out/Due Back aren't perfectly kept in sync with an individual
-    # Eqlist's own DateOut/DateBack (see EQUIPMENT_CATALOG_MATCH_BLUEPRINT.md),
-    # so this is a coarse pre-filter only - the real per-day attribution
-    # below still uses each Sort line's own D1/D2.
+    # purpose) before touching Sort/Eqlists at all - confirmed live this
+    # session that scanning the whole Sort table (INNER JOIN Eqlists/Jobs,
+    # filtering by S.D1/D2 directly) times out well past 240s, presumably a
+    # full scan over years of historical bookings with no usable index on
+    # D1/D2. Jobs.Due Out/Due Back aren't perfectly kept in sync with an
+    # individual Eqlist's own DateOut/DateBack (see
+    # EQUIPMENT_CATALOG_MATCH_BLUEPRINT.md), so this is a coarse pre-filter
+    # only - callers needing exact per-day attribution still use each Sort
+    # line's own D1/D2.
     cursor.execute(
         """
-        SELECT "JobNo", "Job_Ref", "Job_Title"
+        SELECT "JobNo", "Job_Ref", "Job_Title", "Due Out", "Due Back"
         FROM "Jobs"
         WHERE "Status" IN (""" + ",".join("?" * len(REAL_JOB_STATUSES)) + """)
           AND "Due Back" >= ?
@@ -71,7 +67,24 @@ def read_equipment_occupancy(cursor):
         today,
     )
     job_rows = cursor.fetchall()
-    job_by_no = {j.JobNo: {"jobRef": (j.Job_Ref or "").strip(), "jobTitle": (j.Job_Title or "").strip()} for j in job_rows}
+    return {
+        j.JobNo: {
+            "jobRef": (j.Job_Ref or "").strip(),
+            "jobTitle": (j.Job_Title or "").strip(),
+            "dueOut": j[3],
+            "dueBack": j[4],
+        }
+        for j in job_rows
+    }
+
+
+def read_equipment_occupancy(cursor):
+    today = date.today()
+    horizon_end = today + timedelta(days=HORIZON_DAYS)
+    days = day_range(today, horizon_end)
+    day_index = {d: i for i, d in enumerate(days)}
+
+    job_by_no = find_active_jobs(cursor, today)
     job_nos = list(job_by_no.keys())
 
     rows = []
@@ -204,6 +217,72 @@ def read_equipment_occupancy(cursor):
     }
 
 
+def read_jobs_gantt(cursor):
+    today = date.today()
+
+    job_by_no = find_active_jobs(cursor, today)
+    job_nos = list(job_by_no.keys())
+
+    eqlists_by_job = {}
+    if job_nos:
+        cursor.execute(
+            f"""
+            SELECT "Eql_no" AS EqlNo, "Job_no" AS JobNo, "Eql_name" AS EqlName,
+                   "Eql_Title" AS EqlTitle, "DateOut" AS DateOut, "DateBack" AS DateBack
+            FROM "Eqlists"
+            WHERE "Job_no" IN ({",".join("?" * len(job_nos))})
+            ORDER BY "DateOut"
+            """,
+            job_nos,
+        )
+        eqlist_rows = cursor.fetchall()
+        eqlist_nos = [e.EqlNo for e in eqlist_rows]
+
+        line_counts = {}
+        if eqlist_nos:
+            cursor.execute(
+                f"""
+                SELECT "Eqlno" AS EqlNo, COUNT(*) AS LineCount
+                FROM "Sort"
+                WHERE "Eqlno" IN ({",".join("?" * len(eqlist_nos))})
+                GROUP BY "Eqlno"
+                """,
+                eqlist_nos,
+            )
+            line_counts = {r.EqlNo: r.LineCount for r in cursor.fetchall()}
+
+        for e in eqlist_rows:
+            eqlists_by_job.setdefault(e.JobNo, []).append(
+                {
+                    "eqlNo": e.EqlNo,
+                    "eqlName": (e.EqlName or "").strip(),
+                    "eqlTitle": (e.EqlTitle or "").strip(),
+                    "dateOut": e.DateOut.date().isoformat() if hasattr(e.DateOut, "date") else serialize(e.DateOut),
+                    "dateBack": e.DateBack.date().isoformat() if hasattr(e.DateBack, "date") else serialize(e.DateBack),
+                    "lineCount": line_counts.get(e.EqlNo, 0),
+                }
+            )
+
+    jobs_out = []
+    for job_no, info in job_by_no.items():
+        eqlists = eqlists_by_job.get(job_no, [])
+        if not eqlists:
+            continue
+        jobs_out.append(
+            {
+                "jobId": job_no,
+                "jobRef": info["jobRef"],
+                "jobTitle": info["jobTitle"],
+                "start": min(e["dateOut"] for e in eqlists),
+                "end": max(e["dateBack"] for e in eqlists),
+                "eqlists": sorted(eqlists, key=lambda e: e["dateOut"]),
+            }
+        )
+    jobs_out.sort(key=lambda j: j["start"])
+
+    return {"generatedAt": date.today().isoformat(), "jobs": jobs_out}
+
+
 def main():
     request = json.load(sys.stdin)
     operation = request.get("operation")
@@ -219,6 +298,8 @@ def main():
         cursor = connection.cursor()
         if operation == "equipment-occupancy":
             result = read_equipment_occupancy(cursor)
+        elif operation == "jobs-gantt":
+            result = read_jobs_gantt(cursor)
         else:
             raise ValueError(f"Unsupported planning read operation: {operation}")
         json.dump({"ok": True, "result": result}, sys.stdout, ensure_ascii=False)

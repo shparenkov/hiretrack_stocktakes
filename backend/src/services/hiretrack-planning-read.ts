@@ -140,3 +140,55 @@ export async function getPlanningOccupancyData(options?: { forceRefresh?: boolea
   }
   return dataCache.data;
 }
+
+export interface PlanningGanttEqlist {
+  eqlNo: number;
+  eqlName: string;
+  eqlTitle: string;
+  dateOut: string;
+  dateBack: string;
+  lineCount: number;
+}
+
+export interface PlanningGanttJob {
+  jobId: number;
+  jobRef: string;
+  jobTitle: string;
+  start: string;
+  end: string;
+  eqlists: PlanningGanttEqlist[];
+}
+
+export interface PlanningJobsGanttData {
+  generatedAt: string;
+  jobs: PlanningGanttJob[];
+}
+
+let ganttCache: { expiresAt: number; data: PlanningJobsGanttData } | null = null;
+let pendingGanttRead: Promise<PlanningJobsGanttData> | null = null;
+
+function refreshJobsGanttData(): Promise<PlanningJobsGanttData> {
+  if (!pendingGanttRead) {
+    pendingGanttRead = runPlanningOdbcRead<PlanningJobsGanttData>({ operation: 'jobs-gantt' })
+      .then((data) => {
+        ganttCache = { expiresAt: Date.now() + cacheMs, data };
+        return data;
+      })
+      .finally(() => {
+        pendingGanttRead = null;
+      });
+  }
+  return pendingGanttRead;
+}
+
+export async function getPlanningJobsGanttData(options?: { forceRefresh?: boolean }): Promise<PlanningJobsGanttData> {
+  if (options?.forceRefresh || !ganttCache) {
+    return refreshJobsGanttData();
+  }
+  if (ganttCache.expiresAt <= Date.now()) {
+    void refreshJobsGanttData().catch((error) => {
+      console.error('Background jobs-gantt refresh failed:', error);
+    });
+  }
+  return ganttCache.data;
+}

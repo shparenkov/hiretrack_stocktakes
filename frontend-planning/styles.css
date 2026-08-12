@@ -3,6 +3,9 @@
   --left-name: 280px;
   --left-owned: 80px;
   --day-w: 42px;
+  --gantt-left-toggle: 26px;
+  --gantt-left-ref: 130px;
+  --gantt-left-title: 280px;
   --blue: #2d5f8f;
   --blue-light: #e3edf5;
   --red: #d93b3b;
@@ -177,3 +180,47 @@ body { height: 100vh; display: flex; flex-direction: column; }
   height: 100%; width: 0%; background: var(--blue); transition: width .2s ease-out;
 }
 #shortages-progress-text { white-space: nowrap; }
+
+.gantt-toolbar-row { display: flex; gap: 6px; padding: 8px 14px; border-bottom: 1px solid var(--border); background: var(--bg-alt); }
+.gantt-toolbar-row button { border: 1px solid var(--border); background: #fff; padding: 5px 10px; cursor: pointer; font-size: 12px; }
+.gantt-toolbar-row button:hover { background: var(--bg-alt); }
+
+.gantt-row {
+  display: grid;
+  border-bottom: 1px solid var(--border);
+  min-height: 30px;
+  align-items: stretch;
+  width: max-content;
+  min-width: 100%;
+}
+.gantt-row.header { min-height: 34px; }
+
+.gantt-cell {
+  display: flex; align-items: center; padding: 0 8px;
+  border-right: 1px solid var(--border); background: var(--bg);
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+.gantt-row .gantt-cell.toggle { position: sticky; left: 0; z-index: 3; justify-content: center; padding: 0; }
+.gantt-row .gantt-cell.col-ref { position: sticky; left: var(--gantt-left-toggle); z-index: 3; font-weight: 700; }
+.gantt-row .gantt-cell.col-title { position: sticky; left: calc(var(--gantt-left-toggle) + var(--gantt-left-ref)); z-index: 3; border-right: 2px solid #b7bfca; }
+
+.gantt-row.header .gantt-cell { background: var(--bg-alt); font-weight: 600; z-index: 4; }
+.gantt-row.header .gantt-cell.day { flex-direction: column; align-items: center; justify-content: center; font-weight: 400; font-size: 10px; padding: 0 2px; }
+.gantt-row.header .gantt-cell.day.weekend { background: #e9ebee; }
+.gantt-row.header .gantt-cell.day.today { background: #fff4d6; }
+
+.gantt-toggle-wrap { cursor: pointer; }
+.gantt-row.gantt-job:hover .gantt-cell { background: #fafbfc; }
+.gantt-badge { font-size: 11px; color: var(--muted); font-weight: 400; }
+
+.gantt-row.gantt-eqlist .gantt-cell { background: #f4f6f9; font-size: 11px; color: var(--muted); }
+.gantt-row.gantt-eqlist .gantt-cell.col-title { padding-left: 22px; }
+
+.gantt-bar-track {
+  position: relative; height: 100%; overflow: hidden;
+  background-image: linear-gradient(to right, var(--border) 0, var(--border) 1px, transparent 1px, transparent 100%);
+  background-size: var(--day-w) 100%;
+  background-repeat: repeat-x;
+}
+.gantt-bar { position: absolute; top: 5px; bottom: 5px; border: 1px solid #1f4468; background: var(--blue); }
+.gantt-bar.phase { background: var(--blue-light); border: 1px solid var(--blue); top: 4px; bottom: 4px; }

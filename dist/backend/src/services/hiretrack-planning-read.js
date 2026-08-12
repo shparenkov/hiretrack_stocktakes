@@ -4,6 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getPlanningOccupancyData = getPlanningOccupancyData;
+exports.getPlanningJobsGanttData = getPlanningJobsGanttData;
 const child_process_1 = require("child_process");
 const path_1 = __importDefault(require("path"));
 function resolveBridgePath() {
@@ -99,4 +100,30 @@ async function getPlanningOccupancyData(options) {
         });
     }
     return dataCache.data;
+}
+let ganttCache = null;
+let pendingGanttRead = null;
+function refreshJobsGanttData() {
+    if (!pendingGanttRead) {
+        pendingGanttRead = runPlanningOdbcRead({ operation: 'jobs-gantt' })
+            .then((data) => {
+            ganttCache = { expiresAt: Date.now() + cacheMs, data };
+            return data;
+        })
+            .finally(() => {
+            pendingGanttRead = null;
+        });
+    }
+    return pendingGanttRead;
+}
+async function getPlanningJobsGanttData(options) {
+    if (options?.forceRefresh || !ganttCache) {
+        return refreshJobsGanttData();
+    }
+    if (ganttCache.expiresAt <= Date.now()) {
+        void refreshJobsGanttData().catch((error) => {
+            console.error('Background jobs-gantt refresh failed:', error);
+        });
+    }
+    return ganttCache.data;
 }

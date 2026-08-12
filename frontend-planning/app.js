@@ -3,6 +3,7 @@ const DAY_W = 42; // keep in sync with --day-w in styles.css
 
 let OCCUPANCY = null; // { start, end, types, lines }
 let SHORTAGES = null; // { generatedAt, jobs }
+let JOBS_GANTT = null; // { generatedAt, jobs }
 let start = new Date();
 let DAY_COUNT = 30;
 
@@ -33,6 +34,9 @@ const state = {
   shortagesLoading: false,
   shortagesError: null,
   expandedShortageJobs: new Set(),
+  ganttLoading: false,
+  ganttError: null,
+  expandedGanttJobs: new Set(),
 };
 
 function setWindow(startStr, length) {
@@ -144,8 +148,146 @@ function render() {
 
   if (state.activeTab === "occupancy") renderOccupancy();
   if (state.activeTab === "shortages") renderShortages();
-  if (state.activeTab === "jobs") {
-    document.getElementById("jobs-panel").innerHTML = `<p class="placeholder">Скоро.</p>`;
+  if (state.activeTab === "jobs") renderJobsGantt();
+}
+
+// Jobs Gantt has no window controls of its own - it auto-fits its day
+// range to the loaded jobs' own min(start)/max(end) instead, since (unlike
+// occupancy's fixed 60-day horizon) job spans vary wildly and there's no
+// single "today-relative" window that makes sense to default to.
+function ganttWindow() {
+  if (!JOBS_GANTT || JOBS_GANTT.jobs.length === 0) return null;
+  const starts = JOBS_GANTT.jobs.map((j) => new Date(j.start + "T00:00:00"));
+  const ends = JOBS_GANTT.jobs.map((j) => new Date(j.end + "T00:00:00"));
+  const winStart = new Date(Math.min(...starts));
+  const winEnd = new Date(Math.max(...ends));
+  const count = daysBetween(winStart, winEnd) + 1;
+  return { winStart, count: Math.max(1, count) };
+}
+
+function ganttBarStyle(colStart, colEnd, dayW) {
+  const left = (colStart - 1) * dayW;
+  const width = Math.max(1, colEnd - colStart) * dayW;
+  return `left:${left}px; width:${width}px;`;
+}
+
+function renderGanttHeader(winStart, count) {
+  const cells = [`<div class="gantt-cell toggle"></div>`, `<div class="gantt-cell col-ref">Job</div>`, `<div class="gantt-cell col-title">Название</div>`];
+  const today = todayStr();
+  for (let i = 0; i < count; i++) {
+    const d = addDays(winStart, i);
+    const iso = fmt(d);
+    const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+    const isToday = iso === today;
+    const dateStr = `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}`;
+    cells.push(`<div class="gantt-cell day${isWeekend ? " weekend" : ""}${isToday ? " today" : ""}"><span class="date">${dateStr}</span></div>`);
+  }
+  return `<div class="gantt-row header" style="grid-template-columns: var(--gantt-left-toggle) var(--gantt-left-ref) var(--gantt-left-title) repeat(${count}, var(--day-w));">${cells.join("")}</div>`;
+}
+
+function renderGanttBarRow(id, refLabel, titleLabel, barStart, barEnd, winStart, count, extraRowClass, extraBarClass, badge) {
+  const colStart = daysBetween(winStart, barStart) + 1;
+  const colEnd = daysBetween(winStart, barEnd) + 2;
+  const clampedStart = Math.max(colStart, 1);
+  const clampedEnd = Math.min(colEnd, count + 1);
+  const barHtml = clampedStart < clampedEnd
+    ? `<div class="gantt-bar${extraBarClass ? " " + extraBarClass : ""}" style="${ganttBarStyle(clampedStart, clampedEnd, DAY_W)}" title="${refLabel}: ${fmt(barStart)} → ${fmt(barEnd)}"></div>`
+    : "";
+  return `<div class="gantt-row${extraRowClass ? " " + extraRowClass : ""}" style="grid-template-columns: var(--gantt-left-toggle) var(--gantt-left-ref) var(--gantt-left-title) repeat(${count}, var(--day-w));" data-gantt-job="${id}">
+    <div class="gantt-cell toggle"></div>
+    <div class="gantt-cell col-ref">${refLabel}</div>
+    <div class="gantt-cell col-title">${titleLabel}${badge != null ? ` <span class="gantt-badge">${badge}</span>` : ""}</div>
+    <div class="gantt-bar-track" style="grid-column: 4 / -1;">${barHtml}</div>
+  </div>`;
+}
+
+function renderJobsGantt() {
+  const panel = document.getElementById("jobs-panel");
+
+  if (state.ganttLoading && !JOBS_GANTT) {
+    panel.innerHTML = `<p class="placeholder">Загрузка работ…</p>`;
+    return;
+  }
+  if (state.ganttError && !JOBS_GANTT) {
+    panel.innerHTML = `<p class="placeholder error">Не удалось получить работы: ${state.ganttError}</p>`;
+    return;
+  }
+  const win = ganttWindow();
+  if (!JOBS_GANTT || !win) {
+    panel.innerHTML = `<p class="placeholder">Нет работ в горизонте планирования.</p>`;
+    return;
+  }
+
+  const rows = [renderGanttHeader(win.winStart, win.count)];
+  for (const job of JOBS_GANTT.jobs) {
+    const expanded = state.expandedGanttJobs.has(job.jobId);
+    const jobStart = new Date(job.start + "T00:00:00");
+    const jobEnd = new Date(job.end + "T00:00:00");
+    rows.push(
+      `<div class="gantt-toggle-wrap" data-gantt-job="${job.jobId}">
+        ${renderGanttBarRow(job.jobId, job.jobRef, job.jobTitle, jobStart, jobEnd, win.winStart, win.count, "gantt-job", "", job.eqlists.length > 1 ? job.eqlists.length : null)}
+      </div>`
+    );
+    if (expanded) {
+      for (const eq of job.eqlists) {
+        const eqStart = new Date(eq.dateOut + "T00:00:00");
+        const eqEnd = new Date(eq.dateBack + "T00:00:00");
+        rows.push(
+          renderGanttBarRow(
+            job.jobId,
+            "",
+            eq.eqlTitle || eq.eqlName,
+            eqStart,
+            eqEnd,
+            win.winStart,
+            win.count,
+            "gantt-eqlist",
+            "phase",
+            eq.lineCount
+          )
+        );
+      }
+    }
+  }
+  panel.innerHTML = `<div class="gantt-toolbar-row"><button type="button" id="gantt-expand-all">Развернуть всё</button><button type="button" id="gantt-collapse-all">Свернуть всё</button></div>${rows.join("")}`;
+
+  document.getElementById("gantt-expand-all")?.addEventListener("click", () => {
+    JOBS_GANTT.jobs.forEach((j) => state.expandedGanttJobs.add(j.jobId));
+    renderJobsGantt();
+  });
+  document.getElementById("gantt-collapse-all")?.addEventListener("click", () => {
+    state.expandedGanttJobs.clear();
+    renderJobsGantt();
+  });
+}
+
+document.getElementById("jobs-panel").addEventListener("click", (ev) => {
+  const row = ev.target.closest(".gantt-row.gantt-job");
+  if (!row) return;
+  const jobId = Number(row.dataset.ganttJob);
+  if (state.expandedGanttJobs.has(jobId)) state.expandedGanttJobs.delete(jobId);
+  else state.expandedGanttJobs.add(jobId);
+  renderJobsGantt();
+});
+
+async function loadJobsGantt(options) {
+  const forceRefresh = options && options.forceRefresh;
+  const url = forceRefresh ? "/api/planning/jobs-gantt?refresh=1" : "/api/planning/jobs-gantt";
+  state.ganttLoading = true;
+  state.ganttError = null;
+  renderJobsGantt();
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      throw new Error(text || `HTTP ${resp.status}`);
+    }
+    JOBS_GANTT = await resp.json();
+  } catch (e) {
+    state.ganttError = e.message;
+  } finally {
+    state.ganttLoading = false;
+    renderJobsGantt();
   }
 }
 
@@ -282,6 +424,9 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
     if (state.activeTab === "shortages" && !SHORTAGES && !state.shortagesLoading) {
       loadShortages();
     }
+    if (state.activeTab === "jobs" && !JOBS_GANTT && !state.ganttLoading) {
+      loadJobsGantt();
+    }
   });
 });
 
@@ -303,9 +448,11 @@ document.getElementById("refresh-data").addEventListener("click", async () => {
   btn.textContent = "Обновляю...";
   try {
     if (state.activeTab === "shortages") {
-      // Shortages does its own real-time loading/error rendering - avoid
-      // racing it with a second render() call from here.
+      // Shortages/jobs do their own real-time loading/error rendering -
+      // avoid racing them with a second render() call from here.
       await loadShortages({ forceRefresh: true });
+    } else if (state.activeTab === "jobs") {
+      await loadJobsGantt({ forceRefresh: true });
     } else {
       await loadOccupancy({ forceRefresh: true });
       render();
