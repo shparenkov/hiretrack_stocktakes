@@ -50,84 +50,135 @@ def read_equipment_occupancy(cursor):
     days = day_range(today, horizon_end)
     day_index = {d: i for i, d in enumerate(days)}
 
-    # Every Sort line on a real job whose own [D1, D2] range overlaps the
-    # horizon window - D1/D2 are plain per-line date columns copied from the
-    # owning Eqlist at insert time (confirmed in DB_QUERY_REFERENCE.md), so
-    # this doesn't need to re-derive dates from Eqlists at all.
+    # Narrow to real, still-relevant jobs FIRST (same "Due Back" >= today
+    # heuristic hiretrack_crew_read.py already validated live for this
+    # purpose) before touching Sort at all - confirmed live this session
+    # that scanning the whole Sort table (INNER JOIN Eqlists/Jobs, filtering
+    # by S.D1/D2 directly) times out well past 240s, presumably a full scan
+    # over years of historical bookings with no usable index on D1/D2.
+    # Jobs.Due Out/Due Back aren't perfectly kept in sync with an individual
+    # Eqlist's own DateOut/DateBack (see EQUIPMENT_CATALOG_MATCH_BLUEPRINT.md),
+    # so this is a coarse pre-filter only - the real per-day attribution
+    # below still uses each Sort line's own D1/D2.
     cursor.execute(
         """
-        SELECT S."Type" AS TypeId, S."Quant" AS Qty, S."D1" AS D1, S."D2" AS D2,
-               J."JobNo" AS JobNo, J."Job_Ref" AS JobRef, J."Job_Title" AS JobTitle
-        FROM "Sort" S
-        INNER JOIN "Eqlists" E ON E."Eql_no" = S."Eqlno"
-        INNER JOIN "Jobs" J ON J."JobNo" = E."Job_no"
-        WHERE J."Status" IN (""" + ",".join("?" * len(REAL_JOB_STATUSES)) + """)
-          AND S."D1" <= ?
-          AND S."D2" >= ?
+        SELECT "JobNo", "Job_Ref", "Job_Title"
+        FROM "Jobs"
+        WHERE "Status" IN (""" + ",".join("?" * len(REAL_JOB_STATUSES)) + """)
+          AND "Due Back" >= ?
         """,
         *REAL_JOB_STATUSES,
-        horizon_end,
         today,
     )
-    rows = cursor.fetchall()
+    job_rows = cursor.fetchall()
+    job_by_no = {j.JobNo: {"jobRef": (j.Job_Ref or "").strip(), "jobTitle": (j.Job_Title or "").strip()} for j in job_rows}
+    job_nos = list(job_by_no.keys())
 
-    type_ids = sorted({r.TypeId for r in rows if r.TypeId is not None})
-
-    hetype = {}
-    if type_ids:
+    rows = []
+    if job_nos:
         cursor.execute(
             f"""
-            SELECT H."Type" AS TypeId, H."Description" AS Name, C."Description" AS CategoryName
-            FROM "Hetype" H
-            LEFT JOIN "category" C ON C."Category" = H."Category"
-            WHERE H."Type" IN ({",".join("?" * len(type_ids))})
+            SELECT "Eql_no" AS EqlNo, "Job_no" AS JobNo
+            FROM "Eqlists"
+            WHERE "Job_no" IN ({",".join("?" * len(job_nos))})
             """,
-            type_ids,
+            job_nos,
         )
-        for r in cursor.fetchall():
+        eqlist_rows = cursor.fetchall()
+        eqlist_job = {e.EqlNo: e.JobNo for e in eqlist_rows}
+        eqlist_nos = list(eqlist_job.keys())
+
+        if eqlist_nos:
+            cursor.execute(
+                f"""
+                SELECT "Type" AS TypeId, "Quant" AS Qty, "D1" AS D1, "D2" AS D2, "Eqlno" AS EqlNo
+                FROM "Sort"
+                WHERE "Eqlno" IN ({",".join("?" * len(eqlist_nos))})
+                  AND "D1" <= ? AND "D2" >= ?
+                """,
+                *eqlist_nos,
+                horizon_end,
+                today,
+            )
+            for r in cursor.fetchall():
+                job_no = eqlist_job.get(r.EqlNo)
+                job_info = job_by_no.get(job_no, {"jobRef": "", "jobTitle": ""})
+                rows.append(
+                    {
+                        "typeId": r.TypeId,
+                        "qty": r.Qty,
+                        "d1": r.D1,
+                        "d2": r.D2,
+                        "jobNo": job_no,
+                        "jobRef": job_info["jobRef"],
+                        "jobTitle": job_info["jobTitle"],
+                    }
+                )
+
+    type_ids = sorted({r["typeId"] for r in rows if r["typeId"] is not None})
+    wanted_types = set(type_ids)
+
+    # Deliberately UNFILTERED (no "Type IN (...)" clause) - confirmed live
+    # this session that NexusDB handles a large parameterized IN list
+    # catastrophically badly (721 placeholders took ~270s here, vs ~0.02s
+    # for a full unfiltered scan of this same small table). Hetype is only
+    # ~7000 rows - same "just read the whole table" approach the equipment-
+    # catalog-full operation already uses in hiretrack_stocktake_read.py -
+    # so fetch everything and filter down to wanted_types in Python instead.
+    hetype = {}
+    cursor.execute(
+        """
+        SELECT H."Type" AS TypeId, H."Description" AS Name, C."Description" AS CategoryName
+        FROM "Hetype" H
+        LEFT JOIN "category" C ON C."Category" = H."Category"
+        """
+    )
+    for r in cursor.fetchall():
+        if r.TypeId in wanted_types:
             hetype[r.TypeId] = {
                 "name": (r.Name or "").strip(),
                 "categoryName": (r.CategoryName or "").strip(),
             }
 
+    # Same reasoning - filter by site/pool only (cheap, two literal values)
+    # and narrow to wanted_types in Python rather than a huge IN clause.
     site_owns = {}
-    if type_ids:
-        cursor.execute(
-            f"""
-            SELECT "Typeidx" AS TypeId, "SiteOwns" AS SiteOwns
-            FROM "Whlevel"
-            WHERE "xSite" = ? AND CAST("StockPool" AS SMALLINT) = ?
-              AND "Typeidx" IN ({",".join("?" * len(type_ids))})
-            """,
-            STOCK_SITE,
-            STOCK_POOL,
-            *type_ids,
-        )
-        for r in cursor.fetchall():
+    cursor.execute(
+        """
+        SELECT "Typeidx" AS TypeId, "SiteOwns" AS SiteOwns
+        FROM "Whlevel"
+        WHERE "xSite" = ? AND CAST("StockPool" AS SMALLINT) = ?
+        """,
+        STOCK_SITE,
+        STOCK_POOL,
+    )
+    for r in cursor.fetchall():
+        if r.TypeId in wanted_types:
             site_owns[r.TypeId] = r.SiteOwns
 
     day_totals_by_type = {t: [0] * len(days) for t in type_ids}
     lines = []
     for r in rows:
-        d1 = max(r.D1.date() if hasattr(r.D1, "date") else r.D1, today)
-        d2 = min(r.D2.date() if hasattr(r.D2, "date") else r.D2, horizon_end)
+        raw_d1, raw_d2 = r["d1"], r["d2"]
+        d1 = max(raw_d1.date() if hasattr(raw_d1, "date") else raw_d1, today)
+        d2 = min(raw_d2.date() if hasattr(raw_d2, "date") else raw_d2, horizon_end)
         if d1 > d2:
             continue
-        totals = day_totals_by_type.get(r.TypeId)
+        totals = day_totals_by_type.get(r["typeId"])
         if totals is not None:
             i0 = day_index[d1]
             i1 = day_index[d2]
             for i in range(i0, i1 + 1):
-                totals[i] += r.Qty or 0
+                totals[i] += r["qty"] or 0
         lines.append(
             {
-                "typeId": r.TypeId,
-                "jobId": r.JobNo,
-                "jobRef": (r.JobRef or "").strip(),
-                "jobTitle": (r.JobTitle or "").strip(),
+                "typeId": r["typeId"],
+                "jobId": r["jobNo"],
+                "jobRef": r["jobRef"],
+                "jobTitle": r["jobTitle"],
                 "start": d1.isoformat(),
                 "end": d2.isoformat(),
-                "qty": r.Qty or 0,
+                "qty": r["qty"] or 0,
             }
         )
 
