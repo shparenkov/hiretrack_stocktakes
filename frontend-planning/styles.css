@@ -167,6 +167,26 @@ body { height: 100vh; display: flex; flex-direction: column; }
 .shortage-detail-name { flex: 1 1 auto; }
 .shortage-detail-nums { flex: 0 0 auto; color: #932b20; font-weight: 600; white-space: nowrap; }
 
+.shortage-status-toggles {
+  display: flex; gap: 16px; padding: 8px 14px;
+  background: var(--bg-alt); border-bottom: 1px solid var(--border);
+}
+.shortage-status-toggle {
+  display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.shortage-status-toggle.status-confirmed { color: #226b2c; }
+.shortage-status-toggle.status-hold { color: #7a5a00; }
+.shortage-status-toggle.status-request { color: #555; }
+
+.shortage-status-group-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 14px; font-size: 12px; font-weight: 700;
+  border-bottom: 1px solid var(--border);
+}
+.shortage-status-group.status-confirmed .shortage-status-group-header { background: #eaf7ec; color: #226b2c; }
+.shortage-status-group.status-hold .shortage-status-group-header { background: #fff4d6; color: #7a5a00; }
+.shortage-status-group.status-request .shortage-status-group-header { background: #f2f3f5; color: #555; }
+
 .shortages-progress {
   display: flex; align-items: center; gap: 8px;
   padding: 6px 14px; font-size: 11px; color: var(--muted);

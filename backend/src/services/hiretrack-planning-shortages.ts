@@ -33,6 +33,11 @@ export interface PlanningShortageJob {
   jobId: number;
   jobRef: string;
   jobTitle: string;
+  // Carried straight from occupancy.lines (see PlanningOccupancyLine) so
+  // the frontend can group/filter shortages by stage (Запрос/Бронь/
+  // Подтверждено) without a second lookup.
+  jobStatus: string;
+  jobStatusRank: number;
   shortages: PlanningShortageDetail[];
 }
 
@@ -152,7 +157,14 @@ async function computeShortages(): Promise<PlanningShortagesData> {
     for (const line of contributingLines) {
       let job = jobMap.get(line.jobId);
       if (!job) {
-        job = { jobId: line.jobId, jobRef: line.jobRef, jobTitle: line.jobTitle, shortages: [] };
+        job = {
+          jobId: line.jobId,
+          jobRef: line.jobRef,
+          jobTitle: line.jobTitle,
+          jobStatus: line.jobStatus,
+          jobStatusRank: line.jobStatusRank,
+          shortages: [],
+        };
         jobMap.set(line.jobId, job);
       }
       if (!job.shortages.some((s) => s.typeId === run.typeId && s.dayStart === run.dayStart && s.dayEnd === run.dayEnd)) {

@@ -14,7 +14,11 @@ import pyodbc
 
 DSN = os.environ.get("PLANNING_ODBC_DSN", "HireTrack DSN")
 QUERY_TIMEOUT = int(os.environ.get("PLANNING_ODBC_QUERY_TIMEOUT", "60"))
-HORIZON_DAYS = int(os.environ.get("PLANNING_ODBC_HORIZON_DAYS", "60"))
+# Per explicit user request (2026-08-12): the occupancy/shortage horizon was
+# 60 days, but a week ahead is enough - also cuts how many jobs/Eqlists/Sort
+# rows get pulled in at all (see find_active_jobs' horizon_end param), not
+# just how many days are displayed.
+HORIZON_DAYS = int(os.environ.get("PLANNING_ODBC_HORIZON_DAYS", "7"))
 # Jobs.Status values treated as "real" (not draft/cancelled) - same filter
 # hiretrack_crew_read.py already validated live for this purpose.
 REAL_JOB_STATUSES = (1, 2, 3, 4, 6)
@@ -44,7 +48,23 @@ def day_range(start, end):
     return days
 
 
-def find_active_jobs(cursor, today):
+# defcon.Defcon_idx -> (Defcon_text, SortOrder) - confirmed live this session
+# (2026-08-12): idx 1 = "Запрос" (SortOrder 1), idx 2 = "Бронь" (SortOrder 2),
+# idx 3 = "Подтверждено" and idx 6 = "Подтвержден (внутренний)" both
+# SortOrder 3, idx 4 = "В работе" SortOrder 4 - i.e. every REAL_JOB_STATUSES
+# value from 3 upward is some flavor of "confirmed or further along". Bucket
+# rank into exactly the 3 stages the user asked to filter by
+# (Запрос/Бронь/Подтверждено-and-beyond), same grouping crew-bookings' own
+# status dropdown already uses ("Подтверждено и выше" for its rank>=3 option).
+def read_defcon(cursor):
+    cursor.execute("SELECT Defcon_idx, Defcon_text, SortOrder FROM defcon")
+    rows = cursor.fetchall()
+    text_by_status = {r.Defcon_idx: (r.Defcon_text or "").strip() for r in rows}
+    rank_by_status = {r.Defcon_idx: min(r.SortOrder, 3) for r in rows}
+    return text_by_status, rank_by_status
+
+
+def find_active_jobs(cursor, today, horizon_end=None):
     # Narrow to real, still-relevant jobs FIRST (same "Due Back" >= today
     # heuristic hiretrack_crew_read.py already validated live for this
     # purpose) before touching Sort/Eqlists at all - confirmed live this
@@ -56,23 +76,39 @@ def find_active_jobs(cursor, today):
     # EQUIPMENT_CATALOG_MATCH_BLUEPRINT.md), so this is a coarse pre-filter
     # only - callers needing exact per-day attribution still use each Sort
     # line's own D1/D2.
+    #
+    # horizon_end, when given, also caps "Due Out" - narrows which jobs get
+    # pulled into the (potentially large) Eqlists/Sort IN-clause fetches
+    # that follow, not just which days get displayed. Per explicit user
+    # request: occupancy/shortages only need jobs starting within the next
+    # HORIZON_DAYS, not every future job regardless of how far out it
+    # starts. jobs-gantt calls this without horizon_end - it wants the full
+    # future pipeline, not just next week.
+    params = list(REAL_JOB_STATUSES) + [today]
+    horizon_clause = ""
+    if horizon_end is not None:
+        horizon_clause = ' AND "Due Out" <= ?'
+        params.append(horizon_end)
+
     cursor.execute(
         """
-        SELECT "JobNo", "Job_Ref", "Job_Title", "Due Out", "Due Back"
+        SELECT "JobNo", "Job_Ref", "Job_Title", "Due Out", "Due Back", "Status"
         FROM "Jobs"
         WHERE "Status" IN (""" + ",".join("?" * len(REAL_JOB_STATUSES)) + """)
-          AND "Due Back" >= ?
-        """,
-        *REAL_JOB_STATUSES,
-        today,
+          AND "Due Back" >= ?"""
+        + horizon_clause,
+        params,
     )
     job_rows = cursor.fetchall()
+    text_by_status, rank_by_status = read_defcon(cursor)
     return {
         j.JobNo: {
             "jobRef": (j.Job_Ref or "").strip(),
             "jobTitle": (j.Job_Title or "").strip(),
             "dueOut": j[3],
             "dueBack": j[4],
+            "status": text_by_status.get(j.Status, str(j.Status)),
+            "statusRank": rank_by_status.get(j.Status, 0),
         }
         for j in job_rows
     }
@@ -84,7 +120,7 @@ def read_equipment_occupancy(cursor):
     days = day_range(today, horizon_end)
     day_index = {d: i for i, d in enumerate(days)}
 
-    job_by_no = find_active_jobs(cursor, today)
+    job_by_no = find_active_jobs(cursor, today, horizon_end)
     job_nos = list(job_by_no.keys())
 
     rows = []
@@ -115,7 +151,7 @@ def read_equipment_occupancy(cursor):
             )
             for r in cursor.fetchall():
                 job_no = eqlist_job.get(r.EqlNo)
-                job_info = job_by_no.get(job_no, {"jobRef": "", "jobTitle": ""})
+                job_info = job_by_no.get(job_no, {"jobRef": "", "jobTitle": "", "status": "", "statusRank": 0})
                 rows.append(
                     {
                         "typeId": r.TypeId,
@@ -125,6 +161,8 @@ def read_equipment_occupancy(cursor):
                         "jobNo": job_no,
                         "jobRef": job_info["jobRef"],
                         "jobTitle": job_info["jobTitle"],
+                        "jobStatus": job_info["status"],
+                        "jobStatusRank": job_info["statusRank"],
                     }
                 )
 
@@ -189,6 +227,8 @@ def read_equipment_occupancy(cursor):
                 "jobId": r["jobNo"],
                 "jobRef": r["jobRef"],
                 "jobTitle": r["jobTitle"],
+                "jobStatus": r["jobStatus"],
+                "jobStatusRank": r["jobStatusRank"],
                 "start": d1.isoformat(),
                 "end": d2.isoformat(),
                 "qty": r["qty"] or 0,

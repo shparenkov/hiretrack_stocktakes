@@ -34,6 +34,11 @@ const state = {
   shortagesLoading: false,
   shortagesError: null,
   expandedShortageJobs: new Set(),
+  // Rank 3/2/1 match jobStatusRank's own bucketing (hiretrack_planning_read.py's
+  // read_defcon) - all three on by default, toggled off to hide that stage
+  // entirely. Приоритет: Подтверждено (3) высокий, Бронь (2) средний,
+  // Запрос (1) низкий - per explicit user request.
+  shortageStatusVisible: { 3: true, 2: true, 1: true },
   ganttLoading: false,
   ganttError: null,
   expandedGanttJobs: new Set(),
@@ -296,53 +301,99 @@ function shortageDayLabel(iso) {
   return `${d}.${m}.${y}`;
 }
 
+// rank 3/2/1 match jobStatusRank's own bucketing - see read_defcon's
+// comment in hiretrack_planning_read.py. Listed high to low priority per
+// explicit user request (Подтверждено first, Запрос last).
+const SHORTAGE_STATUS_BUCKETS = [
+  { rank: 3, label: "Подтверждено", className: "confirmed" },
+  { rank: 2, label: "Бронь", className: "hold" },
+  { rank: 1, label: "Запрос", className: "request" },
+];
+
+function renderShortageStatusToggles() {
+  return `<div class="shortage-status-toggles">
+    ${SHORTAGE_STATUS_BUCKETS.map(
+      (b) => `<label class="shortage-status-toggle status-${b.className}">
+        <input type="checkbox" data-status-rank="${b.rank}" ${state.shortageStatusVisible[b.rank] ? "checked" : ""}>
+        ${b.label}
+      </label>`
+    ).join("")}
+  </div>`;
+}
+
+function renderShortageJobRow(job) {
+  const expanded = state.expandedShortageJobs.has(job.jobId);
+  const detailRows = job.shortages
+    .map((s) => {
+      const range = s.dayStart === s.dayEnd ? shortageDayLabel(s.dayStart) : `${shortageDayLabel(s.dayStart)} – ${shortageDayLabel(s.dayEnd)}`;
+      return `<div class="shortage-detail-row">
+        <span class="shortage-detail-day">${range}</span>
+        <span class="shortage-detail-name">${s.typeName}</span>
+        <span class="shortage-detail-nums">нужно ${s.booked}, в наличии ${s.owned}${s.availableQty != null ? `, доступно ${s.availableQty}` : ""}</span>
+      </div>`;
+    })
+    .join("");
+  return `<div class="shortage-job${expanded ? " expanded" : ""}">
+    <button type="button" class="shortage-job-header" data-action="toggle-shortage-job" data-job="${job.jobId}">
+      <span class="toggle-icon">${expanded ? "−" : "+"}</span>
+      <span class="shortage-job-ref">${job.jobRef}</span>
+      <span class="shortage-job-title">${job.jobTitle}</span>
+      <span class="shortage-count-badge">${job.shortages.length}</span>
+      <a class="shortage-open-link" href="/create-job/?job=${encodeURIComponent(job.jobRef)}" target="_blank" rel="noopener">Открыть →</a>
+    </button>
+    ${expanded ? `<div class="shortage-job-details">${detailRows}</div>` : ""}
+  </div>`;
+}
+
 function renderShortages() {
   const panel = document.getElementById("shortages-panel");
 
   if (state.shortagesLoading && !SHORTAGES) {
-    panel.innerHTML = `<p class="placeholder">Проверяю нехватки через HireTrack — см. прогресс выше.</p>`;
+    panel.innerHTML = `${renderShortageStatusToggles()}<p class="placeholder">Проверяю нехватки через HireTrack — см. прогресс выше.</p>`;
     return;
   }
   if (state.shortagesError && !SHORTAGES) {
-    panel.innerHTML = `<p class="placeholder error">Не удалось получить нехватки: ${state.shortagesError}</p>`;
+    panel.innerHTML = `${renderShortageStatusToggles()}<p class="placeholder error">Не удалось получить нехватки: ${state.shortagesError}</p>`;
     return;
   }
   if (!SHORTAGES) {
-    panel.innerHTML = `<p class="placeholder">Нет данных.</p>`;
-    return;
-  }
-  if (SHORTAGES.jobs.length === 0) {
-    const horizon = OCCUPANCY ? `${shortageDayLabel(OCCUPANCY.start)} — ${shortageDayLabel(OCCUPANCY.end)}` : "текущий горизонт";
-    panel.innerHTML = `<p class="placeholder">Нехваток не найдено (${horizon}).</p>`;
+    panel.innerHTML = `${renderShortageStatusToggles()}<p class="placeholder">Нет данных.</p>`;
     return;
   }
 
-  const rows = SHORTAGES.jobs.map((job) => {
-    const expanded = state.expandedShortageJobs.has(job.jobId);
-    const detailRows = job.shortages
-      .map((s) => {
-        const range = s.dayStart === s.dayEnd ? shortageDayLabel(s.dayStart) : `${shortageDayLabel(s.dayStart)} – ${shortageDayLabel(s.dayEnd)}`;
-        return `<div class="shortage-detail-row">
-          <span class="shortage-detail-day">${range}</span>
-          <span class="shortage-detail-name">${s.typeName}</span>
-          <span class="shortage-detail-nums">нужно ${s.booked}, в наличии ${s.owned}${s.availableQty != null ? `, доступно ${s.availableQty}` : ""}</span>
-        </div>`;
-      })
-      .join("");
-    return `<div class="shortage-job${expanded ? " expanded" : ""}">
-      <button type="button" class="shortage-job-header" data-action="toggle-shortage-job" data-job="${job.jobId}">
-        <span class="toggle-icon">${expanded ? "−" : "+"}</span>
-        <span class="shortage-job-ref">${job.jobRef}</span>
-        <span class="shortage-job-title">${job.jobTitle}</span>
-        <span class="shortage-count-badge">${job.shortages.length}</span>
-        <a class="shortage-open-link" href="/create-job/?job=${encodeURIComponent(job.jobRef)}" target="_blank" rel="noopener">Открыть →</a>
-      </button>
-      ${expanded ? `<div class="shortage-job-details">${detailRows}</div>` : ""}
-    </div>`;
-  });
+  const visibleJobs = SHORTAGES.jobs.filter((job) => state.shortageStatusVisible[job.jobStatusRank] !== false);
+  if (visibleJobs.length === 0) {
+    const message =
+      SHORTAGES.jobs.length > 0
+        ? "Нет видимых нехваток — все стадии со статусом скрыты переключателями выше."
+        : `Нехваток не найдено (${OCCUPANCY ? `${shortageDayLabel(OCCUPANCY.start)} — ${shortageDayLabel(OCCUPANCY.end)}` : "текущий горизонт"}).`;
+    panel.innerHTML = `${renderShortageStatusToggles()}<p class="placeholder">${message}</p>`;
+    return;
+  }
 
-  panel.innerHTML = `<div class="shortage-meta">Обновлено: ${new Date(SHORTAGES.generatedAt).toLocaleString("ru-RU")}</div>${rows.join("")}`;
+  const groups = SHORTAGE_STATUS_BUCKETS.map((bucket) => ({
+    bucket,
+    jobs: visibleJobs.filter((j) => j.jobStatusRank === bucket.rank).sort((a, b) => a.jobRef.localeCompare(b.jobRef, "ru")),
+  })).filter((g) => g.jobs.length > 0);
+
+  const sections = groups
+    .map(
+      (g) => `<div class="shortage-status-group status-${g.bucket.className}">
+        <div class="shortage-status-group-header">${g.bucket.label} <span class="shortage-count-badge">${g.jobs.length}</span></div>
+        ${g.jobs.map(renderShortageJobRow).join("")}
+      </div>`
+    )
+    .join("");
+
+  panel.innerHTML = `${renderShortageStatusToggles()}<div class="shortage-meta">Обновлено: ${new Date(SHORTAGES.generatedAt).toLocaleString("ru-RU")}</div>${sections}`;
 }
+
+document.getElementById("shortages-panel").addEventListener("change", (ev) => {
+  const checkbox = ev.target.closest("input[data-status-rank]");
+  if (!checkbox) return;
+  state.shortageStatusVisible[Number(checkbox.dataset.statusRank)] = checkbox.checked;
+  renderShortages();
+});
 
 document.getElementById("shortages-panel").addEventListener("click", (ev) => {
   const link = ev.target.closest(".shortage-open-link");

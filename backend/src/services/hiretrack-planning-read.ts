@@ -26,6 +26,12 @@ export interface PlanningOccupancyLine {
   jobId: number;
   jobRef: string;
   jobTitle: string;
+  // Job status text (e.g. "Запрос"/"Бронь"/"Подтверждено") and its bucketed
+  // priority rank (1/2/3 - see hiretrack_planning_read.py's read_defcon
+  // comment) - lets shortages/other consumers group or filter by stage
+  // without a second job lookup.
+  jobStatus: string;
+  jobStatusRank: number;
   start: string;
   end: string;
   qty: number;
