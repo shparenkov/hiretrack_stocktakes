@@ -2,6 +2,7 @@ const DOW_FULL = ["воскресенье", "понедельник", "втор�
 const DAY_W = 42; // keep in sync with --day-w in styles.css
 
 let OCCUPANCY = null; // { start, end, types, lines }
+let SHORTAGES = null; // { generatedAt, jobs }
 let start = new Date();
 let DAY_COUNT = 30;
 
@@ -29,6 +30,9 @@ const state = {
   activeTab: "occupancy",
   categoryFilter: "",
   shortageOnly: false,
+  shortagesLoading: false,
+  shortagesError: null,
+  expandedShortageJobs: new Set(),
 };
 
 function setWindow(startStr, length) {
@@ -139,11 +143,93 @@ function render() {
   document.getElementById("occupancy-toolbar").classList.toggle("hidden", state.activeTab !== "occupancy");
 
   if (state.activeTab === "occupancy") renderOccupancy();
-  if (state.activeTab === "shortages") {
-    document.getElementById("shortages-panel").innerHTML = `<p class="placeholder">Скоро.</p>`;
-  }
+  if (state.activeTab === "shortages") renderShortages();
   if (state.activeTab === "jobs") {
     document.getElementById("jobs-panel").innerHTML = `<p class="placeholder">Скоро.</p>`;
+  }
+}
+
+function shortageDayLabel(iso) {
+  const [y, m, d] = iso.split("-");
+  return `${d}.${m}.${y}`;
+}
+
+function renderShortages() {
+  const panel = document.getElementById("shortages-panel");
+
+  if (state.shortagesLoading && !SHORTAGES) {
+    panel.innerHTML = `<p class="placeholder">Проверяю нехватки через HireTrack (может занять до пары минут)…</p>`;
+    return;
+  }
+  if (state.shortagesError && !SHORTAGES) {
+    panel.innerHTML = `<p class="placeholder error">Не удалось получить нехватки: ${state.shortagesError}</p>`;
+    return;
+  }
+  if (!SHORTAGES) {
+    panel.innerHTML = `<p class="placeholder">Нет данных.</p>`;
+    return;
+  }
+  if (SHORTAGES.jobs.length === 0) {
+    const horizon = OCCUPANCY ? `${shortageDayLabel(OCCUPANCY.start)} — ${shortageDayLabel(OCCUPANCY.end)}` : "текущий горизонт";
+    panel.innerHTML = `<p class="placeholder">Нехваток не найдено (${horizon}).</p>`;
+    return;
+  }
+
+  const rows = SHORTAGES.jobs.map((job) => {
+    const expanded = state.expandedShortageJobs.has(job.jobId);
+    const detailRows = job.shortages
+      .map(
+        (s) => `<div class="shortage-detail-row">
+          <span class="shortage-detail-day">${shortageDayLabel(s.day)}</span>
+          <span class="shortage-detail-name">${s.typeName}</span>
+          <span class="shortage-detail-nums">нужно ${s.booked}, в наличии ${s.owned}${s.availableQty != null ? `, доступно ${s.availableQty}` : ""}</span>
+        </div>`
+      )
+      .join("");
+    return `<div class="shortage-job${expanded ? " expanded" : ""}">
+      <button type="button" class="shortage-job-header" data-action="toggle-shortage-job" data-job="${job.jobId}">
+        <span class="toggle-icon">${expanded ? "−" : "+"}</span>
+        <span class="shortage-job-ref">${job.jobRef}</span>
+        <span class="shortage-job-title">${job.jobTitle}</span>
+        <span class="shortage-count-badge">${job.shortages.length}</span>
+        <a class="shortage-open-link" href="/create-job/?job=${encodeURIComponent(job.jobRef)}" target="_blank" rel="noopener">Открыть →</a>
+      </button>
+      ${expanded ? `<div class="shortage-job-details">${detailRows}</div>` : ""}
+    </div>`;
+  });
+
+  panel.innerHTML = `<div class="shortage-meta">Обновлено: ${new Date(SHORTAGES.generatedAt).toLocaleString("ru-RU")}</div>${rows.join("")}`;
+}
+
+document.getElementById("shortages-panel").addEventListener("click", (ev) => {
+  const link = ev.target.closest(".shortage-open-link");
+  if (link) return; // let the link navigate normally
+  const btn = ev.target.closest("button[data-action='toggle-shortage-job']");
+  if (!btn) return;
+  const jobId = Number(btn.dataset.job);
+  if (state.expandedShortageJobs.has(jobId)) state.expandedShortageJobs.delete(jobId);
+  else state.expandedShortageJobs.add(jobId);
+  renderShortages();
+});
+
+async function loadShortages(options) {
+  const forceRefresh = options && options.forceRefresh;
+  const url = forceRefresh ? "/api/planning/shortages?refresh=1" : "/api/planning/shortages";
+  state.shortagesLoading = true;
+  state.shortagesError = null;
+  renderShortages();
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      throw new Error(text || `HTTP ${resp.status}`);
+    }
+    SHORTAGES = await resp.json();
+  } catch (e) {
+    state.shortagesError = e.message;
+  } finally {
+    state.shortagesLoading = false;
+    renderShortages();
   }
 }
 
@@ -152,6 +238,9 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
     document.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b === btn));
     state.activeTab = btn.dataset.tab;
     render();
+    if (state.activeTab === "shortages" && !SHORTAGES && !state.shortagesLoading) {
+      loadShortages();
+    }
   });
 });
 
@@ -172,8 +261,14 @@ document.getElementById("refresh-data").addEventListener("click", async () => {
   btn.disabled = true;
   btn.textContent = "Обновляю...";
   try {
-    await loadOccupancy({ forceRefresh: true });
-    render();
+    if (state.activeTab === "shortages") {
+      // Shortages does its own real-time loading/error rendering - avoid
+      // racing it with a second render() call from here.
+      await loadShortages({ forceRefresh: true });
+    } else {
+      await loadOccupancy({ forceRefresh: true });
+      render();
+    }
     btn.textContent = "Обновлено!";
   } catch (e) {
     console.error(e);

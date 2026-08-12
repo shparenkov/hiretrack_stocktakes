@@ -129,3 +129,37 @@ body { height: 100vh; display: flex; flex-direction: column; }
 .day-qty.q-tight { background: #fff4d6; color: #7a5a00; }
 .day-qty.q-short { background: #fbe1e1; color: #932b20; font-weight: 700; }
 .day-qty.q-unknown { background: #f2f3f5; color: #555; }
+
+.placeholder.error { color: #932b20; }
+
+.shortage-meta { padding: 8px 14px; color: var(--muted); font-size: 11px; border-bottom: 1px solid var(--border); }
+
+.shortage-job { border-bottom: 1px solid var(--border); }
+.shortage-job-header {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 10px 14px; border: 0; background: var(--bg); cursor: pointer;
+  font: inherit; text-align: left;
+}
+.shortage-job-header:hover { background: var(--bg-alt); }
+.shortage-job.expanded .shortage-job-header { background: #eef2f7; font-weight: 600; }
+.toggle-icon {
+  flex: 0 0 auto; width: 18px; height: 18px; display: flex; align-items: center; justify-content: center;
+  border: 1px solid #7a828c; background: #fff; font-size: 11px; font-weight: 700;
+}
+.shortage-job-ref { flex: 0 0 auto; font-weight: 700; }
+.shortage-job-title { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.shortage-count-badge {
+  flex: 0 0 auto; min-width: 20px; padding: 1px 6px; text-align: center;
+  background: var(--red); color: #fff; font-size: 11px; font-weight: 700;
+}
+.shortage-open-link { flex: 0 0 auto; font-size: 11px; color: var(--blue); text-decoration: none; }
+.shortage-open-link:hover { text-decoration: underline; }
+
+.shortage-job-details { padding: 4px 14px 10px 42px; background: #fbfbfc; }
+.shortage-detail-row {
+  display: flex; gap: 12px; padding: 4px 0; font-size: 12px; border-bottom: 1px dashed #e4e6ea;
+}
+.shortage-detail-row:last-child { border-bottom: 0; }
+.shortage-detail-day { flex: 0 0 70px; font-weight: 600; color: var(--muted); }
+.shortage-detail-name { flex: 1 1 auto; }
+.shortage-detail-nums { flex: 0 0 auto; color: #932b20; font-weight: 600; white-space: nowrap; }
