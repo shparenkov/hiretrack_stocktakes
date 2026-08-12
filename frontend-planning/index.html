@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <title>Планирование — HireTrack NX</title>
-  <link rel="stylesheet" href="styles.css?v=4" />
+  <link rel="stylesheet" href="styles.css?v=5" />
 </head>
 <body>
   <div class="toolbar">
@@ -44,6 +44,26 @@
         Только с нехваткой
       </label>
     </span>
+    <!-- Same status-filter/group-by convention as /crew-bookings/ ("как в
+         персонале" per explicit user request). -->
+    <span id="gantt-only-filters" class="gantt-only-filters hidden">
+      <label class="window-field">
+        <span class="ge-label">Статус &gt;=</span>
+        <select id="gantt-status-filter">
+          <option value="1">Запрос</option>
+          <option value="2">Бронь</option>
+          <option value="3">Подтверждено и выше</option>
+        </select>
+      </label>
+      <label class="window-field">Группировка
+        <select id="gantt-group-by">
+          <option value="none">Без группировки</option>
+          <option value="status">Статус</option>
+          <option value="jobRef">Job Reference</option>
+          <option value="start">Дата начала</option>
+        </select>
+      </label>
+    </span>
   </div>
   <div id="load-status" class="load-status">Загрузка данных из HireTrack…</div>
   <div id="shortages-progress" class="shortages-progress hidden">
@@ -55,6 +75,6 @@
     <div id="shortages-panel" class="panel hidden"></div>
     <div id="jobs-panel" class="panel hidden"></div>
   </div>
-  <script src="app.js?v=4"></script>
+  <script src="app.js?v=5"></script>
 </body>
 </html>

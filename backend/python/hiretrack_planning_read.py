@@ -322,6 +322,8 @@ def read_jobs_gantt(cursor):
                 "jobId": job_no,
                 "jobRef": info["jobRef"],
                 "jobTitle": info["jobTitle"],
+                "status": info["status"],
+                "statusRank": info["statusRank"],
                 "start": min(e["dateOut"] for e in eqlists),
                 "end": max(e["dateBack"] for e in eqlists),
                 "eqlists": sorted(eqlists, key=lambda e: e["dateOut"]),

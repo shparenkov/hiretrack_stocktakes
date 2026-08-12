@@ -189,6 +189,11 @@ export interface PlanningGanttJob {
   jobId: number;
   jobRef: string;
   jobTitle: string;
+  // Same status text/bucketed rank as PlanningOccupancyLine (see read_defcon
+  // in hiretrack_planning_read.py) - lets the frontend color/filter/group
+  // jobs by stage, matching the Нехватки tab's own convention.
+  status: string;
+  statusRank: number;
   start: string;
   end: string;
   eqlists: PlanningGanttEqlist[];

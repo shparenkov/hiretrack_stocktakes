@@ -43,6 +43,25 @@ const state = {
   ganttError: null,
   expandedGanttJobs: new Set(),
   expandedOccupancyTypes: new Set(),
+  // Same convention as /crew-bookings/'s own toolbar ("как в персонале" per
+  // explicit user request): statusFilter is a >= threshold (1/2/3, not
+  // independent per-stage toggles like Нехватки uses), groupBy inserts
+  // group-header rows.
+  ganttStatusFilter: 1,
+  ganttGroupBy: "none",
+};
+
+// rank -> CSS class for coloring a job-level Gantt bar - same green/yellow/
+// gray semantics as SHORTAGE_STATUS_BUCKETS' group colors, for visual
+// consistency between Nехватки and Работы.
+const GANTT_STATUS_CLASS = { 3: "status-confirmed", 2: "status-hold", 1: "status-request" };
+
+// Group-by field accessors for Работы, keyed to match <select id="gantt-group-by">'s
+// values - same shape as frontend-crew-bookings/app.js's own GROUP_FIELDS.
+const GANTT_GROUP_FIELDS = {
+  status: (j) => j.status,
+  jobRef: (j) => j.jobRef,
+  start: (j) => j.start,
 };
 
 function setWindow(startStr, length) {
@@ -213,10 +232,10 @@ function render() {
   document.getElementById("shortages-panel").classList.toggle("hidden", state.activeTab !== "shortages");
   document.getElementById("jobs-panel").classList.toggle("hidden", state.activeTab !== "jobs");
   // The date-window toolbar itself (#window-toolbar) stays visible on every
-  // tab - it's one shared filter driving all three modules. Only the two
-  // occupancy-specific sub-controls (category filter, "только с нехваткой")
-  // are tab-conditional.
+  // tab - it's one shared filter driving all three modules. The occupancy-
+  // and jobs-specific sub-controls are tab-conditional.
   document.getElementById("occupancy-only-filters").classList.toggle("hidden", state.activeTab !== "occupancy");
+  document.getElementById("gantt-only-filters").classList.toggle("hidden", state.activeTab !== "jobs");
 
   if (state.activeTab === "occupancy") renderOccupancy();
   if (state.activeTab === "shortages") renderShortages();
@@ -240,8 +259,17 @@ function ganttBarStyle(colStart, colEnd, dayW) {
   return `left:${left}px; width:${width}px;`;
 }
 
+function ganttGridTemplateColumns(count) {
+  return `grid-template-columns: var(--gantt-left-toggle) var(--gantt-left-open) var(--gantt-left-ref) var(--gantt-left-title) repeat(${count}, var(--day-w));`;
+}
+
 function renderGanttHeader(winStart, count) {
-  const cells = [`<div class="gantt-cell toggle"></div>`, `<div class="gantt-cell col-ref">Job</div>`, `<div class="gantt-cell col-title">Название</div>`];
+  const cells = [
+    `<div class="gantt-cell toggle"></div>`,
+    `<div class="gantt-cell open"></div>`,
+    `<div class="gantt-cell col-ref">Job</div>`,
+    `<div class="gantt-cell col-title">Название</div>`,
+  ];
   const today = todayStr();
   for (let i = 0; i < count; i++) {
     const d = addDays(winStart, i);
@@ -251,10 +279,17 @@ function renderGanttHeader(winStart, count) {
     const dateStr = `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}`;
     cells.push(`<div class="gantt-cell day${isWeekend ? " weekend" : ""}${isToday ? " today" : ""}"><span class="date">${dateStr}</span></div>`);
   }
-  return `<div class="gantt-row header" style="grid-template-columns: var(--gantt-left-toggle) var(--gantt-left-ref) var(--gantt-left-title) repeat(${count}, var(--day-w));">${cells.join("")}</div>`;
+  return `<div class="gantt-row header" style="${ganttGridTemplateColumns(count)}">${cells.join("")}</div>`;
 }
 
-function renderGanttBarRow(id, refLabel, titleLabel, barStart, barEnd, winStart, count, extraRowClass, extraBarClass, badge) {
+// statusClassName colors the bar by job stage (same green/yellow/gray
+// scheme as Нехватки's status groups - see GANTT_STATUS_CLASS) - null for
+// nested Eqlist/phase rows, which keep the neutral "phase" look instead.
+// badgeText/openHref are both optional: badgeText renders as a labeled
+// pill (never a bare number - see the "confusing numbers" fix below),
+// openHref renders a small "open in create-job" link in its own column,
+// left of Job/Название, only on job-level rows.
+function renderGanttBarRow(id, refLabel, titleLabel, barStart, barEnd, winStart, count, extraRowClass, extraBarClass, badgeText, statusClassName, openHref) {
   const colStart = daysBetween(winStart, barStart) + 1;
   const colEnd = daysBetween(winStart, barEnd) + 2;
   const clampedStart = Math.max(colStart, 1);
@@ -262,16 +297,29 @@ function renderGanttBarRow(id, refLabel, titleLabel, barStart, barEnd, winStart,
   const truncStart = colStart < 1;
   const truncEnd = colEnd > count + 1;
   const barHtml = clampedStart < clampedEnd
-    ? `<div class="gantt-bar${extraBarClass ? " " + extraBarClass : ""}${truncStart ? " trunc-start" : ""}${truncEnd ? " trunc-end" : ""}" style="${ganttBarStyle(clampedStart, clampedEnd, DAY_W)}" title="${refLabel}: ${fmt(barStart)} → ${fmt(barEnd)}">
+    ? `<div class="gantt-bar${extraBarClass ? " " + extraBarClass : ""}${statusClassName ? " " + statusClassName : ""}${truncStart ? " trunc-start" : ""}${truncEnd ? " trunc-end" : ""}" style="${ganttBarStyle(clampedStart, clampedEnd, DAY_W)}" title="${refLabel}: ${fmt(barStart)} → ${fmt(barEnd)}">
         ${truncStart ? `<span class="trunc-marker left">&laquo;</span>` : ""}
         ${truncEnd ? `<span class="trunc-marker right">&raquo;</span>` : ""}
       </div>`
     : "";
-  return `<div class="gantt-row${extraRowClass ? " " + extraRowClass : ""}" style="grid-template-columns: var(--gantt-left-toggle) var(--gantt-left-ref) var(--gantt-left-title) repeat(${count}, var(--day-w));" data-gantt-job="${id}">
+  const openCell = openHref
+    ? `<a class="gantt-open-link" href="${openHref}" target="_blank" rel="noopener" title="Открыть работу">&#8599;</a>`
+    : "";
+  return `<div class="gantt-row${extraRowClass ? " " + extraRowClass : ""}" style="${ganttGridTemplateColumns(count)}" data-gantt-job="${id}">
     <div class="gantt-cell toggle"></div>
+    <div class="gantt-cell open">${openCell}</div>
     <div class="gantt-cell col-ref">${refLabel}</div>
-    <div class="gantt-cell col-title">${titleLabel}${badge != null ? ` <span class="gantt-badge">${badge}</span>` : ""}</div>
-    <div class="gantt-bar-track" style="grid-column: 4 / -1;">${barHtml}</div>
+    <div class="gantt-cell col-title">${titleLabel}${badgeText ? ` <span class="gantt-badge">${badgeText}</span>` : ""}</div>
+    <div class="gantt-bar-track" style="grid-column: 5 / -1;">${barHtml}</div>
+  </div>`;
+}
+
+function renderGanttGroupHeaderRow(label, count) {
+  return `<div class="gantt-row group-header" style="${ganttGridTemplateColumns(count)}">
+    <div class="gantt-cell toggle"></div>
+    <div class="gantt-cell open"></div>
+    <div class="gantt-cell col-ref group-label" style="grid-column: 3 / 5;">${label}</div>
+    <div class="gantt-bar-track" style="grid-column: 5 / -1;"></div>
   </div>`;
 }
 
@@ -297,25 +345,47 @@ function renderJobsGantt() {
   // fetch), so without this a 7-day window would still list all 72+ jobs
   // with empty bars.
   const winEnd = addDays(win.winStart, win.count - 1);
-  const visibleJobs = JOBS_GANTT.jobs.filter((job) => {
+  let visibleJobs = JOBS_GANTT.jobs.filter((job) => {
     const jobStart = new Date(job.start + "T00:00:00");
     const jobEnd = new Date(job.end + "T00:00:00");
     return jobStart <= winEnd && jobEnd >= win.winStart;
   });
+
+  // Same >= threshold convention as /crew-bookings/'s own status filter.
+  visibleJobs = visibleJobs.filter((job) => (job.statusRank ?? 0) >= state.ganttStatusFilter);
 
   if (visibleJobs.length === 0) {
     panel.innerHTML = `<p class="placeholder">Нет работ в текущем периоде.</p>`;
     return;
   }
 
+  const groupKey = GANTT_GROUP_FIELDS[state.ganttGroupBy];
+  if (groupKey) {
+    visibleJobs = [...visibleJobs].sort((a, b) => String(groupKey(a)).localeCompare(String(groupKey(b)), "ru"));
+  }
+
   const rows = [renderGanttHeader(win.winStart, win.count)];
+  let lastGroup;
   for (const job of visibleJobs) {
+    if (groupKey) {
+      const key = groupKey(job);
+      if (key !== lastGroup) {
+        rows.push(renderGanttGroupHeaderRow(key, win.count));
+        lastGroup = key;
+      }
+    }
+
     const expanded = state.expandedGanttJobs.has(job.jobId);
     const jobStart = new Date(job.start + "T00:00:00");
     const jobEnd = new Date(job.end + "T00:00:00");
+    // Never a bare number after the title - see the "confusing digits" fix:
+    // always spelled out, e.g. "6 списков", only shown when there's more
+    // than one Eqlist to distinguish.
+    const jobBadge = job.eqlists.length > 1 ? `${job.eqlists.length} списков` : null;
+    const openHref = `/create-job/?job=${encodeURIComponent(job.jobRef)}`;
     rows.push(
       `<div class="gantt-toggle-wrap" data-gantt-job="${job.jobId}">
-        ${renderGanttBarRow(job.jobId, job.jobRef, job.jobTitle, jobStart, jobEnd, win.winStart, win.count, "gantt-job", "", job.eqlists.length > 1 ? job.eqlists.length : null)}
+        ${renderGanttBarRow(job.jobId, job.jobRef, job.jobTitle, jobStart, jobEnd, win.winStart, win.count, "gantt-job", "", jobBadge, GANTT_STATUS_CLASS[job.statusRank], openHref)}
       </div>`
     );
     if (expanded) {
@@ -333,7 +403,9 @@ function renderJobsGantt() {
             win.count,
             "gantt-eqlist",
             "phase",
-            eq.lineCount
+            `${eq.lineCount} поз.`,
+            null,
+            null
           )
         );
       }
@@ -352,6 +424,7 @@ function renderJobsGantt() {
 }
 
 document.getElementById("jobs-panel").addEventListener("click", (ev) => {
+  if (ev.target.closest(".gantt-open-link")) return; // let the link navigate normally
   const row = ev.target.closest(".gantt-row.gantt-job");
   if (!row) return;
   const jobId = Number(row.dataset.ganttJob);
@@ -689,6 +762,15 @@ document.getElementById("category-filter").addEventListener("input", (ev) => {
 document.getElementById("shortage-only").addEventListener("change", (ev) => {
   state.shortageOnly = ev.target.checked;
   render();
+});
+
+document.getElementById("gantt-status-filter").addEventListener("change", (ev) => {
+  state.ganttStatusFilter = Number(ev.target.value);
+  renderJobsGantt();
+});
+document.getElementById("gantt-group-by").addEventListener("change", (ev) => {
+  state.ganttGroupBy = ev.target.value;
+  renderJobsGantt();
 });
 
 async function boot() {

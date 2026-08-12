@@ -4,8 +4,11 @@
   --left-owned: 80px;
   --day-w: 42px;
   --gantt-left-toggle: 26px;
+  --gantt-left-open: 26px;
   --gantt-left-ref: 130px;
   --gantt-left-title: 280px;
+  --green: #226b2c;
+  --yellow: #7a5a00;
   --blue: #2d5f8f;
   --blue-light: #e3edf5;
   --red: #d93b3b;
@@ -221,20 +224,36 @@ body { height: 100vh; display: flex; flex-direction: column; }
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
 }
 .gantt-row .gantt-cell.toggle { position: sticky; left: 0; z-index: 3; justify-content: center; padding: 0; }
-.gantt-row .gantt-cell.col-ref { position: sticky; left: var(--gantt-left-toggle); z-index: 3; font-weight: 700; }
-.gantt-row .gantt-cell.col-title { position: sticky; left: calc(var(--gantt-left-toggle) + var(--gantt-left-ref)); z-index: 3; border-right: 2px solid #b7bfca; }
+.gantt-row .gantt-cell.open { position: sticky; left: var(--gantt-left-toggle); z-index: 3; justify-content: center; padding: 0; }
+.gantt-row .gantt-cell.col-ref { position: sticky; left: calc(var(--gantt-left-toggle) + var(--gantt-left-open)); z-index: 3; font-weight: 700; }
+.gantt-row .gantt-cell.col-title { position: sticky; left: calc(var(--gantt-left-toggle) + var(--gantt-left-open) + var(--gantt-left-ref)); z-index: 3; border-right: 2px solid #b7bfca; }
 
 .gantt-row.header .gantt-cell { background: var(--bg-alt); font-weight: 600; z-index: 4; }
 .gantt-row.header .gantt-cell.day { flex-direction: column; align-items: center; justify-content: center; font-weight: 400; font-size: 10px; padding: 0 2px; }
 .gantt-row.header .gantt-cell.day.weekend { background: #e9ebee; }
 .gantt-row.header .gantt-cell.day.today { background: #fff4d6; }
 
+.gantt-open-link {
+  font-size: 13px; color: var(--blue); text-decoration: none; line-height: 1;
+}
+.gantt-open-link:hover { color: #1f4468; }
+
 .gantt-toggle-wrap { cursor: pointer; }
 .gantt-row.gantt-job:hover .gantt-cell { background: #fafbfc; }
-.gantt-badge { font-size: 11px; color: var(--muted); font-weight: 400; }
+/* Always a labeled pill, never a bare number after the title - see
+   renderGanttBarRow/occupancyJobBarRow's own comments on the "confusing
+   digits" fix. */
+.gantt-badge {
+  display: inline-block; font-size: 10px; color: var(--muted); font-weight: 600;
+  background: var(--bg-alt); border: 1px solid var(--border); padding: 0 5px; margin-left: 2px;
+}
 
 .gantt-row.gantt-eqlist .gantt-cell { background: #f4f6f9; font-size: 11px; color: var(--muted); }
 .gantt-row.gantt-eqlist .gantt-cell.col-title { padding-left: 22px; }
+
+.gantt-row.group-header .gantt-cell.col-ref.group-label {
+  background: #cfd3d9; font-weight: 700; font-size: 13px;
+}
 
 .gantt-bar-track {
   position: relative; height: 100%; overflow: hidden;
@@ -245,6 +264,10 @@ body { height: 100vh; display: flex; flex-direction: column; }
 .gantt-bar { position: absolute; top: 5px; bottom: 5px; border: 1px solid #1f4468; background: var(--blue); }
 .gantt-bar.phase { background: var(--blue-light); border: 1px solid var(--blue); top: 4px; bottom: 4px; }
 .gantt-bar.occ-job-bar { background: #3d7a52; border: 1px solid #1f4f30; }
+/* Same green/yellow/gray semantics as Нехватки's status groups. */
+.gantt-bar.status-confirmed { background: #3d8a4a; border: 1px solid #1f5c28; }
+.gantt-bar.status-hold { background: #c98c1f; border: 1px solid #8a5f10; }
+.gantt-bar.status-request { background: #8a94a3; border: 1px solid #5c6470; }
 
 .trunc-marker {
   position: absolute; top: 50%; transform: translateY(-50%);
@@ -255,6 +278,12 @@ body { height: 100vh; display: flex; flex-direction: column; }
 
 .occupancy-only-filters { display: flex; gap: 16px; align-items: flex-end; }
 .occupancy-only-filters.hidden { display: none; }
+.gantt-only-filters { display: flex; gap: 16px; align-items: flex-end; }
+.gantt-only-filters.hidden { display: none; }
+.window-field select {
+  border: 1px solid var(--border); padding: 4px 6px; font-size: 12px; background: #fff; height: 26px;
+}
+.ge-label { font-weight: 700; color: var(--text); }
 
 .row .cell.col-category { display: flex; align-items: center; gap: 6px; }
 .occupancy-toggle {
