@@ -273,7 +273,7 @@ function renderPositionRow(job, phase, position, phaseIdx, posIdx) {
           data-job="${job.id}" data-phase="${phaseIdx}" data-pos="${posIdx}"
           title="Поставить под резерв (Pencilled)"
           ${pending ? "disabled" : ""}
-        >${pending ? "…" : "П"}</button>
+        >${pending ? "…" : "P"}</button>
         <button
           type="button"
           class="assignee-book"
@@ -281,7 +281,7 @@ function renderPositionRow(job, phase, position, phaseIdx, posIdx) {
           data-job="${job.id}" data-phase="${phaseIdx}" data-pos="${posIdx}"
           title="Забукать (Booked)"
           ${pending ? "disabled" : ""}
-        >${pending ? "…" : "&#10003;"}</button>
+        >${pending ? "…" : "B"}</button>
         ${
           position.assignee
             ? `<button
