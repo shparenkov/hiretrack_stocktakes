@@ -194,6 +194,30 @@ def unassign_position(cursor, params):
     }
 
 
+def set_role_note(cursor, params):
+    # Role.Notes lives on the Crew row (one level above CrewPositions) - a
+    # crewId shared by several CrewPositions slots (e.g. all 3 of a "3x
+    # Rigger" request) all read/write the same note.
+    crew_id = params.get("crewId")
+    notes = params.get("notes", "")
+    if crew_id is None:
+        raise ValueError("set-role-note requires 'crewId'")
+    crew_id = int(crew_id)
+    cursor.execute("UPDATE Crew SET Notes = ? WHERE Idx = ?", notes, crew_id)
+    return {"crewId": crew_id, "notes": notes}
+
+
+def set_shift_note(cursor, params):
+    # Shift.Notes lives on CrewShifts, one row per day a position is booked.
+    shift_id = params.get("shiftId")
+    notes = params.get("notes", "")
+    if shift_id is None:
+        raise ValueError("set-shift-note requires 'shiftId'")
+    shift_id = int(shift_id)
+    cursor.execute("UPDATE CrewShifts SET Notes = ? WHERE IDX = ?", notes, shift_id)
+    return {"shiftId": shift_id, "notes": notes}
+
+
 def main():
     if not DSN:
         raise ValueError("CREW_WRITE_ODBC_DSN is not configured")
@@ -214,6 +238,10 @@ def main():
             result = assign_position(cursor, request)
         elif operation == "unassign-position":
             result = unassign_position(cursor, request)
+        elif operation == "set-role-note":
+            result = set_role_note(cursor, request)
+        elif operation == "set-shift-note":
+            result = set_shift_note(cursor, request)
         else:
             raise ValueError(f"Unsupported crew write operation: {operation}")
         json.dump({"ok": True, "result": result}, sys.stdout, ensure_ascii=False)

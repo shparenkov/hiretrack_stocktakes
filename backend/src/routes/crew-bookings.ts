@@ -1,7 +1,12 @@
 import { Request, Response, Router } from 'express';
 import { z } from 'zod';
 import { getCrewBookingsData } from '../services/hiretrack-crew-read';
-import { assignCrewPosition, unassignCrewPosition } from '../services/hiretrack-crew-write';
+import {
+  assignCrewPosition,
+  setCrewRoleNote,
+  setCrewShiftNote,
+  unassignCrewPosition,
+} from '../services/hiretrack-crew-write';
 
 const assignSchema = z.object({
   jobRef: z.string().min(1),
@@ -15,6 +20,16 @@ const unassignSchema = z.object({
   jobRef: z.string().min(1),
   phaseTitle: z.string().min(1),
   positionIndex: z.coerce.number().int().min(0),
+});
+
+const roleNoteSchema = z.object({
+  crewId: z.coerce.number().int(),
+  notes: z.string().max(4000),
+});
+
+const shiftNoteSchema = z.object({
+  shiftId: z.coerce.number().int(),
+  notes: z.string().max(4000),
 });
 
 export const crewBookingsRouter = Router();
@@ -51,6 +66,34 @@ crewBookingsRouter.post('/unassign', async (req: Request, res: Response) => {
   }
   try {
     const result = await unassignCrewPosition(parsed.data);
+    res.json(result);
+  } catch (error) {
+    res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+crewBookingsRouter.post('/role-note', async (req: Request, res: Response) => {
+  const parsed = roleNoteSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  try {
+    const result = await setCrewRoleNote(parsed.data);
+    res.json(result);
+  } catch (error) {
+    res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+crewBookingsRouter.post('/shift-note', async (req: Request, res: Response) => {
+  const parsed = shiftNoteSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  try {
+    const result = await setCrewShiftNote(parsed.data);
     res.json(result);
   } catch (error) {
     res.status(502).json({ error: error instanceof Error ? error.message : String(error) });

@@ -210,7 +210,18 @@ button.toggle-btn:hover { background: var(--bg-alt); }
 /* Wrap instead of ellipsis so long role names are always fully readable -
    the grid row auto-grows to fit since .row uses min-height, not a fixed
    height. */
-.role-name { overflow: visible; text-overflow: initial; white-space: normal; line-height: 1.25; padding: 4px 8px; }
+.role-name {
+  overflow: visible; text-overflow: initial; white-space: normal; line-height: 1.25; padding: 4px 8px;
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 4px;
+}
+.role-text { flex: 1 1 auto; }
+.note-btn {
+  flex: 0 0 auto; width: 16px; height: 16px; line-height: 1;
+  border: 1px solid var(--border); background: #fff; color: var(--muted);
+  font-size: 10px; cursor: pointer; padding: 0; margin-top: 1px;
+}
+.note-btn:hover { background: var(--bg-alt); }
+.note-btn.has-note { background: var(--purple-light); border-color: var(--purple); color: var(--purple); }
 .position-description { color: var(--muted); font-size: 12px; }
 
 /* Explicit class instead of :has() — :has() support is inconsistent enough
@@ -265,6 +276,12 @@ button.toggle-btn:hover { background: var(--bg-alt); }
 .day-qty.q4 { background: #d93b3b; color: #fff; }
 .day-qty.booked { background: #a9dcae; border-right: 1px solid #eafbea; }
 .day-qty.pencilled { background: #f2d38f; border-right: 1px solid #fbf1dc; }
+.day-qty { position: relative; }
+.day-qty[data-action="edit-shift-note"] { cursor: pointer; }
+.day-qty.has-note::after {
+  content: ""; position: absolute; top: 2px; right: 2px;
+  width: 5px; height: 5px; background: var(--purple); border: 1px solid #fff;
+}
 
 /* position:fixed + attached to <body> - floats above the sticky/scrolling
    grid regardless of any ancestor's overflow:hidden clipping. */
@@ -280,3 +297,25 @@ button.toggle-btn:hover { background: var(--bg-alt); }
 .assignee-dropdown-item { padding: 5px 8px; cursor: pointer; }
 .assignee-dropdown-item:hover { background: var(--purple-light); }
 .assignee-dropdown-empty { padding: 5px 8px; color: var(--muted); font-style: italic; }
+
+.notes-popover {
+  position: fixed;
+  z-index: 1000;
+  background: #fff;
+  border: 1px solid #7a828c;
+  padding: 8px;
+  width: 260px;
+  font-size: 12px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+.notes-popover-title { font-weight: 700; margin-bottom: 4px; }
+.notes-popover-text {
+  width: 100%; font-family: inherit; font-size: 12px; padding: 4px;
+  border: 1px solid var(--border); resize: vertical;
+}
+.notes-popover-actions { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.notes-popover-actions button {
+  border: 1px solid var(--border); background: #fff; padding: 4px 8px; cursor: pointer; font-size: 11px;
+}
+.notes-popover-save { color: var(--green); font-weight: 700; }
+.notes-popover-status { font-size: 10px; color: var(--muted); }

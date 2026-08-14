@@ -18,6 +18,10 @@ export interface CrewBookingsPosition {
   status: 'Unprocessed' | 'Pencilled' | 'Booked';
   assignee: string | null;
   qtyPerDay: number[];
+  crewId: number;
+  roleNotes: string;
+  shiftIds: (number | null)[];
+  shiftNotes: string[];
 }
 
 export interface CrewBookingsPhase {

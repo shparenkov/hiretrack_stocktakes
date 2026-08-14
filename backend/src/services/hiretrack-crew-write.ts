@@ -29,6 +29,16 @@ export interface UnassignPositionResult {
   positionId: number;
 }
 
+export interface SetRoleNoteResult {
+  crewId: number;
+  notes: string;
+}
+
+export interface SetShiftNoteResult {
+  shiftId: number;
+  notes: string;
+}
+
 function resolveBridgePath() {
   return path.resolve(process.cwd(), 'backend', 'python', 'hiretrack_crew_write.py');
 }
@@ -114,4 +124,12 @@ export async function unassignCrewPosition(params: {
   positionIndex: number;
 }): Promise<UnassignPositionResult> {
   return runCrewOdbcWrite<UnassignPositionResult>({ operation: 'unassign-position', ...params });
+}
+
+export async function setCrewRoleNote(params: { crewId: number; notes: string }): Promise<SetRoleNoteResult> {
+  return runCrewOdbcWrite<SetRoleNoteResult>({ operation: 'set-role-note', ...params });
+}
+
+export async function setCrewShiftNote(params: { shiftId: number; notes: string }): Promise<SetShiftNoteResult> {
+  return runCrewOdbcWrite<SetShiftNoteResult>({ operation: 'set-shift-note', ...params });
 }

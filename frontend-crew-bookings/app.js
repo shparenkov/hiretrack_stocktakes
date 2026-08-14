@@ -242,19 +242,39 @@ function renderPositionRow(job, phase, position, phaseIdx, posIdx) {
     const q = dayInPhase >= 0 && dayInPhase < (position.qtyPerDay || []).length ? position.qtyPerDay[dayInPhase] : null;
     if (q === null) {
       dayCells.push(`<div class="day-qty"></div>`);
-    } else if (isBooked || isPencilled) {
-      dayCells.push(`<div class="day-qty ${q ? stateClass : ""}"></div>`);
+      continue;
+    }
+    const shiftId = position.shiftIds ? position.shiftIds[dayInPhase] : null;
+    const shiftNote = position.shiftNotes ? position.shiftNotes[dayInPhase] : "";
+    const hasShiftNote = !!(shiftNote && shiftNote.trim());
+    const noteAttrs =
+      shiftId != null
+        ? `data-action="edit-shift-note" data-job="${job.id}" data-phase="${phaseIdx}" data-pos="${posIdx}" data-day-index="${dayInPhase}" title="${hasShiftNote ? "Есть заметка по смене — клик для просмотра/редактирования" : "Добавить заметку по смене"}"`
+        : "";
+    const noteClass = hasShiftNote ? " has-note" : "";
+    if (isBooked || isPencilled) {
+      dayCells.push(`<div class="day-qty ${q ? stateClass : ""}${noteClass}" ${noteAttrs}></div>`);
     } else {
-      dayCells.push(`<div class="day-qty ${qtyClass(q)}">${q}</div>`);
+      dayCells.push(`<div class="day-qty ${qtyClass(q)}${noteClass}" ${noteAttrs}>${q}</div>`);
     }
   }
   const key = `${job.id}::${phaseIdx}::${posIdx}`;
   const pending = state.assignPending.has(key);
   const error = state.assignErrors.get(key);
   const placeholder = isBooked ? "Забукано" : isPencilled ? "В резерве" : "Unprocessed — назначить...";
+  const hasRoleNote = !!(position.roleNotes && position.roleNotes.trim());
   return `<div class="row position ${stateClass}">
     <div class="cell toggle"></div>
-    <div class="cell col-job role-name">${position.role}</div>
+    <div class="cell col-job role-name">
+      <span class="role-text">${position.role}</span>
+      <button
+        type="button"
+        class="note-btn${hasRoleNote ? " has-note" : ""}"
+        data-action="edit-role-note"
+        data-job="${job.id}" data-phase="${phaseIdx}" data-pos="${posIdx}"
+        title="${hasRoleNote ? "Есть заметка по роли" : "Добавить заметку по роли"}"
+      >&#9998;</button>
+    </div>
     <div class="cell col-name assignee-cell">
       <div class="assignee-field">
         <input
@@ -376,7 +396,7 @@ function render() {
 }
 
 document.getElementById("gantt").addEventListener("click", (ev) => {
-  const btn = ev.target.closest("button[data-action]");
+  const btn = ev.target.closest("[data-action]");
   if (!btn) return;
   if (btn.dataset.action === "toggle-job") {
     const id = btn.dataset.job;
@@ -399,6 +419,10 @@ document.getElementById("gantt").addEventListener("click", (ev) => {
     confirmAssignee(btn.dataset.job, btn.dataset.phase, btn.dataset.pos, input.value, offerStatus);
   } else if (btn.dataset.action === "remove-assignee") {
     removeAssignee(btn.dataset.job, btn.dataset.phase, btn.dataset.pos);
+  } else if (btn.dataset.action === "edit-role-note") {
+    openRoleNoteEditor(btn);
+  } else if (btn.dataset.action === "edit-shift-note") {
+    openShiftNoteEditor(btn);
   }
 });
 
@@ -556,6 +580,123 @@ document.addEventListener("keydown", (ev) => {
   if (ev.key === "Escape" && activeAssigneeInput) closeAssigneeDropdown();
 });
 document.querySelector(".gantt-scroll").addEventListener("scroll", closeAssigneeDropdown);
+
+// Shared floating editor for Role.Notes (Crew.Notes) and Shift.Notes
+// (CrewShifts.Notes) - same float-above-everything pattern as the assignee
+// dropdown, one popover reused for both note types via the onSave callback.
+const notesPopover = document.createElement("div");
+notesPopover.className = "notes-popover";
+notesPopover.style.display = "none";
+document.body.appendChild(notesPopover);
+let notesPopoverSave = null;
+
+function closeNotesPopover() {
+  notesPopover.style.display = "none";
+  notesPopoverSave = null;
+}
+
+function openNotesPopover(anchorEl, { title, initialText, onSave }) {
+  const rect = anchorEl.getBoundingClientRect();
+  notesPopover.innerHTML = `
+    <div class="notes-popover-title">${title}</div>
+    <textarea class="notes-popover-text" rows="4"></textarea>
+    <div class="notes-popover-actions">
+      <button type="button" class="notes-popover-save">Сохранить</button>
+      <button type="button" class="notes-popover-cancel">Отмена</button>
+      <span class="notes-popover-status"></span>
+    </div>
+  `;
+  notesPopover.querySelector(".notes-popover-text").value = initialText || "";
+  notesPopover.style.left = `${Math.max(4, rect.left)}px`;
+  notesPopover.style.top = `${rect.bottom + 4}px`;
+  notesPopover.style.display = "block";
+  notesPopoverSave = onSave;
+  notesPopover.querySelector(".notes-popover-text").focus();
+}
+
+notesPopover.addEventListener("mousedown", (ev) => ev.stopPropagation());
+notesPopover.addEventListener("click", async (ev) => {
+  if (ev.target.classList.contains("notes-popover-cancel")) {
+    closeNotesPopover();
+    return;
+  }
+  if (ev.target.classList.contains("notes-popover-save")) {
+    if (!notesPopoverSave) return;
+    const text = notesPopover.querySelector(".notes-popover-text").value;
+    const statusEl = notesPopover.querySelector(".notes-popover-status");
+    const save = notesPopoverSave;
+    statusEl.textContent = "Сохранение…";
+    try {
+      await save(text);
+      closeNotesPopover();
+      render();
+    } catch (e) {
+      statusEl.textContent = "Ошибка: " + e.message;
+    }
+  }
+});
+document.addEventListener("mousedown", (ev) => {
+  if (ev.target.closest(".notes-popover") || ev.target.closest("[data-action='edit-role-note']") || ev.target.closest("[data-action='edit-shift-note']")) {
+    return;
+  }
+  closeNotesPopover();
+});
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape" && notesPopoverSave) closeNotesPopover();
+});
+document.querySelector(".gantt-scroll").addEventListener("scroll", closeNotesPopover);
+
+function openRoleNoteEditor(btn) {
+  const jobId = btn.dataset.job;
+  const phaseIdx = Number(btn.dataset.phase);
+  const posIdx = Number(btn.dataset.pos);
+  const job = JOBS.find((j) => j.id === jobId);
+  const phase = job.phases[phaseIdx];
+  const position = phase.positions[posIdx];
+  openNotesPopover(btn, {
+    title: `Заметка по роли: ${position.role}`,
+    initialText: position.roleNotes,
+    onSave: async (text) => {
+      const resp = await fetch("/api/crew-bookings/role-note", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ crewId: position.crewId, notes: text }),
+      });
+      const body = await resp.json();
+      if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
+      // A crewId can be shared by several position slots under the same role
+      // request (e.g. all 3 of a "3x Rigger") - keep them all in sync.
+      phase.positions.forEach((p) => {
+        if (p.crewId === position.crewId) p.roleNotes = text;
+      });
+    },
+  });
+}
+
+function openShiftNoteEditor(cell) {
+  const jobId = cell.dataset.job;
+  const phaseIdx = Number(cell.dataset.phase);
+  const posIdx = Number(cell.dataset.pos);
+  const dayIdx = Number(cell.dataset.dayIndex);
+  const job = JOBS.find((j) => j.id === jobId);
+  const phase = job.phases[phaseIdx];
+  const position = phase.positions[posIdx];
+  const shiftId = position.shiftIds[dayIdx];
+  openNotesPopover(cell, {
+    title: `Заметка по смене: ${position.role}`,
+    initialText: position.shiftNotes[dayIdx],
+    onSave: async (text) => {
+      const resp = await fetch("/api/crew-bookings/shift-note", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shiftId, notes: text }),
+      });
+      const body = await resp.json();
+      if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
+      position.shiftNotes[dayIdx] = text;
+    },
+  });
+}
 
 async function loadCrewData(options) {
   const forceRefresh = options && options.forceRefresh;

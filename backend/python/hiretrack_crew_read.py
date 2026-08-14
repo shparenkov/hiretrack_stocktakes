@@ -62,7 +62,7 @@ def read_crew_data(cursor):
     crew_by_header = {}
     if all_header_ids:
         cursor.execute(
-            f'SELECT Idx, Header, "Type" FROM Crew WHERE Header IN ({",".join("?" * len(all_header_ids))}) ORDER BY Idx',
+            f'SELECT Idx, Header, "Type", "Notes" FROM Crew WHERE Header IN ({",".join("?" * len(all_header_ids))}) ORDER BY Idx',
             all_header_ids,
         )
         for c in cursor.fetchall():
@@ -91,7 +91,7 @@ def read_crew_data(cursor):
     if all_position_ids:
         cursor.execute(
             f"""
-            SELECT IDX, xActivity, xPosition, CAST(BookingState AS SMALLINT) AS BookingState
+            SELECT IDX, xActivity, xPosition, CAST(BookingState AS SMALLINT) AS BookingState, "Notes"
             FROM CrewShifts WHERE xPosition IN ({",".join("?" * len(all_position_ids))})
             """,
             all_position_ids,
@@ -192,14 +192,20 @@ def read_crew_data(cursor):
             positions_out = []
             for c in crew_by_header.get(h.Idx, []):
                 role_text = crewtypes.get(c.Type, f"Type {c.Type}")
+                role_notes = (c.Notes or "").strip()
                 for p in positions_by_crew.get(c.Idx, []):
                     qty = [0] * span
+                    shift_ids = [None] * span
+                    shift_notes = [""] * span
                     for s in shifts_by_position.get(p.IDX, []):
                         if s.BookingState == 2:  # cancelled
                             continue
                         d = act_date_by_id.get(s.xActivity)
                         if d and d in date_index:
-                            qty[date_index[d]] = 1
+                            idx = date_index[d]
+                            qty[idx] = 1
+                            shift_ids[idx] = s.IDX
+                            shift_notes[idx] = (s.Notes or "").strip()
                     assignee = names.get(p.xPerson) if p.xPerson else None
                     # TShiftStatus: 0 ssUnprocessed, 2 ssPencilled, 3 ssBooked
                     # (1 ssInProgress isn't used by this write path, falls
@@ -213,6 +219,17 @@ def read_crew_data(cursor):
                             "status": position_status,
                             "assignee": assignee,
                             "qtyPerDay": qty,
+                            # Role.Notes (Crew.Notes) is shared by every
+                            # CrewPositions slot under the same Crew row (e.g.
+                            # all 3 slots of a "3x Rigger" request) - crewId
+                            # lets the frontend update siblings in one write.
+                            "crewId": c.Idx,
+                            "roleNotes": role_notes,
+                            # Shift.Notes (CrewShifts.Notes) is per day; null
+                            # entries mean no CrewShifts row exists that day
+                            # for this position (nothing to attach a note to).
+                            "shiftIds": shift_ids,
+                            "shiftNotes": shift_notes,
                         }
                     )
             if positions_out:
