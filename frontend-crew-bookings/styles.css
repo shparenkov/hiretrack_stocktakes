@@ -229,7 +229,7 @@ button.toggle-btn:hover { background: var(--bg-alt); }
    overflow override, clipping the confirm button off the edge of the column. */
 .cell.col-name.assignee-cell { padding: 3px 4px; overflow: visible; flex-direction: column; align-items: stretch; gap: 2px; }
 .assignee-field { position: relative; width: 100%; display: flex; gap: 3px; align-items: center; }
-.assignee-pencil, .assignee-book, .assignee-remove {
+.assignee-pencil, .assignee-book, .assignee-remove, .assignee-sync {
   flex: 0 0 auto; width: 18px; height: 22px;
   border: 1px solid #7a828c; background: #fff;
   font-weight: 700; cursor: pointer; padding: 0; font-size: 11px;
@@ -237,8 +237,9 @@ button.toggle-btn:hover { background: var(--bg-alt); }
 .assignee-pencil { color: var(--amber); }
 .assignee-book { color: var(--green); }
 .assignee-remove { color: var(--red); }
-.assignee-pencil:hover, .assignee-book:hover, .assignee-remove:hover { background: var(--bg-alt); }
-.assignee-pencil:disabled, .assignee-book:disabled, .assignee-remove:disabled, .assignee-input:disabled { opacity: 0.6; cursor: default; }
+.assignee-sync { color: var(--purple); border-color: var(--purple); background: var(--purple-light); font-size: 13px; }
+.assignee-pencil:hover, .assignee-book:hover, .assignee-remove:hover, .assignee-sync:hover { background: var(--bg-alt); }
+.assignee-pencil:disabled, .assignee-book:disabled, .assignee-remove:disabled, .assignee-sync:disabled, .assignee-input:disabled { opacity: 0.6; cursor: default; }
 .assignee-error {
   font-size: 10px; line-height: 1.2; color: #932b20; white-space: normal;
 }
@@ -276,6 +277,14 @@ button.toggle-btn:hover { background: var(--bg-alt); }
 .day-qty.q4 { background: #d93b3b; color: #fff; }
 .day-qty.booked { background: #a9dcae; border-right: 1px solid #eafbea; }
 .day-qty.pencilled { background: #f2d38f; border-right: 1px solid #fbf1dc; }
+/* A shift Status=0 ("Not Allocated" in HT) under an otherwise Booked/
+   Pencilled position - e.g. a shift added after the person was already
+   assigned. Deliberately distinct from both the green/amber "done" colors
+   and the plain red Unprocessed heatmap, so it reads as "needs action". */
+.day-qty.needs-allocation {
+  background: repeating-linear-gradient(45deg, #fde3c0, #fde3c0 6px, #fbd9a8 6px, #fbd9a8 12px);
+  border-right: 1px solid #f6c98a;
+}
 .day-qty { position: relative; }
 .day-qty[data-action="edit-shift-note"] { cursor: pointer; }
 .day-qty.has-note::after {

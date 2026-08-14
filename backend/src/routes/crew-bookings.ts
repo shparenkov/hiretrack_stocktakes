@@ -5,6 +5,7 @@ import {
   assignCrewPosition,
   setCrewRoleNote,
   setCrewShiftNote,
+  syncCrewShifts,
   unassignCrewPosition,
 } from '../services/hiretrack-crew-write';
 
@@ -17,6 +18,12 @@ const assignSchema = z.object({
 });
 
 const unassignSchema = z.object({
+  jobRef: z.string().min(1),
+  phaseTitle: z.string().min(1),
+  positionIndex: z.coerce.number().int().min(0),
+});
+
+const syncShiftsSchema = z.object({
   jobRef: z.string().min(1),
   phaseTitle: z.string().min(1),
   positionIndex: z.coerce.number().int().min(0),
@@ -66,6 +73,20 @@ crewBookingsRouter.post('/unassign', async (req: Request, res: Response) => {
   }
   try {
     const result = await unassignCrewPosition(parsed.data);
+    res.json(result);
+  } catch (error) {
+    res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+crewBookingsRouter.post('/sync-shifts', async (req: Request, res: Response) => {
+  const parsed = syncShiftsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  try {
+    const result = await syncCrewShifts(parsed.data);
     res.json(result);
   } catch (error) {
     res.status(502).json({ error: error instanceof Error ? error.message : String(error) });

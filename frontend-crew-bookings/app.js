@@ -66,7 +66,7 @@ const state = {
   expandedJobs: new Set(),
   expandedPhases: new Set(), // key: `${jobId}::${phaseIdx}`
   statusFilter: 1, // defcon.SortOrder to match
-  statusAndAbove: false, // false = exact match, true = >= statusFilter
+  statusAndAbove: true, // false = exact match, true = >= statusFilter
   searchQuery: "",
   groupBy: "none",
   assignErrors: new Map(), // key: `${jobId}::${phaseIdx}::${posIdx}` -> message
@@ -231,12 +231,23 @@ function qtyClass(q) {
   return "q4";
 }
 
+// TShiftStatus per individual CrewShifts row - independent of the position's
+// own overall status. A shift added after the position was already
+// Pencilled/Booked starts at 0 ("Not Allocated" in HT) until explicitly
+// synced (see the sync-shifts action below).
+function shiftStateClass(shiftStatus) {
+  if (shiftStatus === 3) return "booked";
+  if (shiftStatus === 2) return "pencilled";
+  return "";
+}
+
 function renderPositionRow(job, phase, position, phaseIdx, posIdx) {
   const s = colFor(phase.start);
   const isBooked = position.status === "Booked";
   const isPencilled = position.status === "Pencilled";
   const stateClass = isBooked ? "booked" : isPencilled ? "pencilled" : "unprocessed";
   const dayCells = [];
+  let needsAllocationCount = 0;
   for (let i = 0; i < DAY_COUNT; i++) {
     const dayInPhase = i - (s - 1);
     const q = dayInPhase >= 0 && dayInPhase < (position.qtyPerDay || []).length ? position.qtyPerDay[dayInPhase] : null;
@@ -252,8 +263,17 @@ function renderPositionRow(job, phase, position, phaseIdx, posIdx) {
         ? `data-action="edit-shift-note" data-job="${job.id}" data-phase="${phaseIdx}" data-pos="${posIdx}" data-day-index="${dayInPhase}" title="${hasShiftNote ? "Есть заметка по смене — клик для просмотра/редактирования" : "Добавить заметку по смене"}"`
         : "";
     const noteClass = hasShiftNote ? " has-note" : "";
+    const shiftStatus = position.shiftStatuses ? position.shiftStatuses[dayInPhase] : null;
+    // A shift that's still Status=0 while the POSITION already has an active
+    // Pencilled/Booked assignment is a straggler that needs the sync-shifts
+    // action - flag it distinctly instead of quietly painting it green/amber
+    // (the bug: this used to just follow the position's overall status).
+    const needsAllocation = q && shiftStatus === 0 && (isBooked || isPencilled);
+    if (needsAllocation) needsAllocationCount += 1;
     if (isBooked || isPencilled) {
-      dayCells.push(`<div class="day-qty ${q ? stateClass : ""}${noteClass}" ${noteAttrs}></div>`);
+      const cellClass = needsAllocation ? "needs-allocation" : q ? shiftStateClass(shiftStatus) : "";
+      const title = needsAllocation ? ' title="Смена не аллоцирована (Not Allocated) — нажмите ⟳, чтобы назначить"' : "";
+      dayCells.push(`<div class="day-qty ${cellClass}${noteClass}"${title} ${noteAttrs}></div>`);
     } else {
       dayCells.push(`<div class="day-qty ${qtyClass(q)}${noteClass}" ${noteAttrs}>${q}</div>`);
     }
@@ -312,6 +332,18 @@ function renderPositionRow(job, phase, position, phaseIdx, posIdx) {
                 title="Снять человека"
                 ${pending ? "disabled" : ""}
               >&#10005;</button>`
+            : ""
+        }
+        ${
+          needsAllocationCount > 0
+            ? `<button
+                type="button"
+                class="assignee-sync"
+                data-action="sync-shifts"
+                data-job="${job.id}" data-phase="${phaseIdx}" data-pos="${posIdx}"
+                title="Аллоцировать ${position.assignee || "человека"} на новые смены (${needsAllocationCount})"
+                ${pending ? "disabled" : ""}
+              >${pending ? "…" : "&#10227;"}</button>`
             : ""
         }
       </div>
@@ -419,6 +451,8 @@ document.getElementById("gantt").addEventListener("click", (ev) => {
     confirmAssignee(btn.dataset.job, btn.dataset.phase, btn.dataset.pos, input.value, offerStatus);
   } else if (btn.dataset.action === "remove-assignee") {
     removeAssignee(btn.dataset.job, btn.dataset.phase, btn.dataset.pos);
+  } else if (btn.dataset.action === "sync-shifts") {
+    syncShifts(btn.dataset.job, btn.dataset.phase, btn.dataset.pos);
   } else if (btn.dataset.action === "edit-role-note") {
     openRoleNoteEditor(btn);
   } else if (btn.dataset.action === "edit-shift-note") {
@@ -501,6 +535,46 @@ async function removeAssignee(jobId, phaseIdx, posIdx) {
     state.pendingInput.delete(key);
   } catch (e) {
     state.assignErrors.set(key, "Не удалось снять: " + e.message);
+  } finally {
+    state.assignPending.delete(key);
+    render();
+  }
+}
+
+// Allocates the already-assigned person onto shifts that got added to a
+// position AFTER it was already Pencilled/Booked (those start at Status=0,
+// "Not Allocated" in HT, until synced - see needsAllocation in
+// renderPositionRow).
+async function syncShifts(jobId, phaseIdx, posIdx) {
+  const job = JOBS.find((j) => j.id === jobId);
+  const phase = job.phases[Number(phaseIdx)];
+  const position = phase.positions[Number(posIdx)];
+  const key = `${jobId}::${phaseIdx}::${posIdx}`;
+
+  state.assignPending.add(key);
+  state.assignErrors.delete(key);
+  render();
+
+  try {
+    const resp = await fetch("/api/crew-bookings/sync-shifts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jobRef: jobId,
+        phaseTitle: phase.name,
+        positionIndex: Number(posIdx),
+      }),
+    });
+    const body = await resp.json();
+    if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
+    const syncedStatus = body.status === "booked" ? 3 : 2;
+    if (position.shiftStatuses) {
+      position.shiftStatuses = position.shiftStatuses.map((st, i) =>
+        position.qtyPerDay[i] && st === 0 ? syncedStatus : st
+      );
+    }
+  } catch (e) {
+    state.assignErrors.set(key, "Не удалось аллоцировать смены: " + e.message);
   } finally {
     state.assignPending.delete(key);
     render();

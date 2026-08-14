@@ -91,7 +91,8 @@ def read_crew_data(cursor):
     if all_position_ids:
         cursor.execute(
             f"""
-            SELECT IDX, xActivity, xPosition, CAST(BookingState AS SMALLINT) AS BookingState, "Notes"
+            SELECT IDX, xActivity, xPosition, CAST(BookingState AS SMALLINT) AS BookingState,
+                   CAST(Status AS SMALLINT) AS Status, "Notes"
             FROM CrewShifts WHERE xPosition IN ({",".join("?" * len(all_position_ids))})
             """,
             all_position_ids,
@@ -197,6 +198,7 @@ def read_crew_data(cursor):
                     qty = [0] * span
                     shift_ids = [None] * span
                     shift_notes = [""] * span
+                    shift_statuses = [None] * span
                     for s in shifts_by_position.get(p.IDX, []):
                         if s.BookingState == 2:  # cancelled
                             continue
@@ -206,6 +208,15 @@ def read_crew_data(cursor):
                             qty[idx] = 1
                             shift_ids[idx] = s.IDX
                             shift_notes[idx] = (s.Notes or "").strip()
+                            # Each CrewShifts row carries its OWN Status - a
+                            # shift added after the position was already
+                            # booked/pencilled starts at 0 (ssUnprocessed,
+                            # "Not Allocated" in HT's own UI) even though the
+                            # position as a whole shows Booked/Pencilled.
+                            # Rendering must use this per-day value, not the
+                            # position's status, or a freshly-added
+                            # not-yet-allocated shift wrongly paints green.
+                            shift_statuses[idx] = s.Status
                     assignee = names.get(p.xPerson) if p.xPerson else None
                     # TShiftStatus: 0 ssUnprocessed, 2 ssPencilled, 3 ssBooked
                     # (1 ssInProgress isn't used by this write path, falls
@@ -230,6 +241,7 @@ def read_crew_data(cursor):
                             # for this position (nothing to attach a note to).
                             "shiftIds": shift_ids,
                             "shiftNotes": shift_notes,
+                            "shiftStatuses": shift_statuses,
                         }
                     )
             if positions_out:

@@ -194,6 +194,46 @@ def unassign_position(cursor, params):
     }
 
 
+def sync_shifts(cursor, params):
+    # A shift added to a position AFTER it was already Pencilled/Booked
+    # starts at Status=0 (ssUnprocessed, "Not Allocated" in HT's own UI) -
+    # the original assign_position() write only touched the shifts that
+    # existed at assignment time. This re-applies the position's current
+    # Status to any of its shifts still stuck at 0, i.e. "allocate the
+    # already-assigned person onto the newly added shifts too".
+    job_ref = params.get("jobRef")
+    phase_title = params.get("phaseTitle")
+    position_index = params.get("positionIndex")
+    if not job_ref or not phase_title or position_index is None:
+        raise ValueError("sync-shifts requires 'jobRef', 'phaseTitle' and 'positionIndex'")
+    position_index = int(position_index)
+
+    target_position = resolve_position(cursor, job_ref, phase_title, position_index)
+
+    cursor.execute("SELECT CAST(Status AS SMALLINT) AS Status FROM CrewPositions WHERE IDX = ?", target_position)
+    row = cursor.fetchone()
+    if not row:
+        raise ValueError(f"CrewPositions row not found for IDX {target_position}")
+    position_status = row.Status
+    if position_status not in (SHIFT_STATUS_PENCILLED, SHIFT_STATUS_BOOKED):
+        raise ValueError("Position has no active Pencilled/Booked assignment to sync new shifts to")
+
+    cursor.execute(
+        "UPDATE CrewShifts SET Status = ? WHERE xPosition = ? AND Status = ?",
+        position_status,
+        target_position,
+        SHIFT_STATUS_UNPROCESSED,
+    )
+
+    return {
+        "jobRef": job_ref,
+        "phaseTitle": phase_title,
+        "positionIndex": position_index,
+        "positionId": target_position,
+        "status": "booked" if position_status == SHIFT_STATUS_BOOKED else "pencilled",
+    }
+
+
 def set_role_note(cursor, params):
     # Role.Notes lives on the Crew row (one level above CrewPositions) - a
     # crewId shared by several CrewPositions slots (e.g. all 3 of a "3x
@@ -238,6 +278,8 @@ def main():
             result = assign_position(cursor, request)
         elif operation == "unassign-position":
             result = unassign_position(cursor, request)
+        elif operation == "sync-shifts":
+            result = sync_shifts(cursor, request)
         elif operation == "set-role-note":
             result = set_role_note(cursor, request)
         elif operation == "set-shift-note":

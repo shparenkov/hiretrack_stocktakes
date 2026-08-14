@@ -29,6 +29,14 @@ export interface UnassignPositionResult {
   positionId: number;
 }
 
+export interface SyncShiftsResult {
+  jobRef: string;
+  phaseTitle: string;
+  positionIndex: number;
+  positionId: number;
+  status: 'pencilled' | 'booked';
+}
+
 export interface SetRoleNoteResult {
   crewId: number;
   notes: string;
@@ -124,6 +132,14 @@ export async function unassignCrewPosition(params: {
   positionIndex: number;
 }): Promise<UnassignPositionResult> {
   return runCrewOdbcWrite<UnassignPositionResult>({ operation: 'unassign-position', ...params });
+}
+
+export async function syncCrewShifts(params: {
+  jobRef: string;
+  phaseTitle: string;
+  positionIndex: number;
+}): Promise<SyncShiftsResult> {
+  return runCrewOdbcWrite<SyncShiftsResult>({ operation: 'sync-shifts', ...params });
 }
 
 export async function setCrewRoleNote(params: { crewId: number; notes: string }): Promise<SetRoleNoteResult> {

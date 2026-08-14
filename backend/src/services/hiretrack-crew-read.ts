@@ -22,6 +22,9 @@ export interface CrewBookingsPosition {
   roleNotes: string;
   shiftIds: (number | null)[];
   shiftNotes: string[];
+  // TShiftStatus per day (0 Unprocessed/"Not Allocated", 2 Pencilled, 3
+  // Booked); null where no CrewShifts row exists that day for this position.
+  shiftStatuses: (number | null)[];
 }
 
 export interface CrewBookingsPhase {
