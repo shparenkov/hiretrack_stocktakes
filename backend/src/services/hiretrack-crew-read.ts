@@ -15,7 +15,7 @@ export interface CrewBookingsPosition {
   role: string;
   position: string;
   description: string;
-  status: 'Processed' | 'Unprocessed';
+  status: 'Unprocessed' | 'Pencilled' | 'Booked';
   assignee: string | null;
   qtyPerDay: number[];
 }
@@ -34,6 +34,8 @@ export interface CrewBookingsJob {
   name: string;
   start: string;
   end: string;
+  activityStart: string;
+  activityEnd: string;
   crewBoss: string;
   client: string;
   jobType: string;

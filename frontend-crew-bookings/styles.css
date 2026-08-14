@@ -9,6 +9,8 @@
   --red: #d93b3b;
   --red-light: #fbe1e1;
   --green: #2f9e44;
+  --amber: #b3791f;
+  --amber-light: #fdf0da;
   --border: #b7bfc9;
   --bg: #ffffff;
   --bg-alt: #f2f3f5;
@@ -60,7 +62,9 @@ body { height: 100vh; display: flex; flex-direction: column; }
 .window-field select {
   border: 1px solid var(--border); padding: 4px 6px; font-size: 12px; background: #fff; height: 26px;
 }
-.ge-label { font-weight: 700; color: var(--text); }
+.checkbox-label { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text); cursor: pointer; }
+.checkbox-label input { width: auto !important; }
+.window-field input#job-search { width: 220px; }
 
 .load-status {
   padding: 8px 14px; font-size: 12px; color: var(--muted); background: var(--bg-alt);
@@ -214,13 +218,16 @@ button.toggle-btn:hover { background: var(--bg-alt); }
    overflow override, clipping the confirm button off the edge of the column. */
 .cell.col-name.assignee-cell { padding: 3px 4px; overflow: visible; flex-direction: column; align-items: stretch; gap: 2px; }
 .assignee-field { position: relative; width: 100%; display: flex; gap: 3px; align-items: center; }
-.assignee-confirm {
-  flex: 0 0 auto; width: 20px; height: 22px;
-  border: 1px solid #7a828c; background: #fff; color: #2f9e44;
-  font-weight: 700; cursor: pointer; padding: 0; font-size: 12px;
+.assignee-pencil, .assignee-book, .assignee-remove {
+  flex: 0 0 auto; width: 18px; height: 22px;
+  border: 1px solid #7a828c; background: #fff;
+  font-weight: 700; cursor: pointer; padding: 0; font-size: 11px;
 }
-.assignee-confirm:hover { background: var(--bg-alt); }
-.assignee-confirm:disabled, .assignee-input:disabled { opacity: 0.6; cursor: default; }
+.assignee-pencil { color: var(--amber); }
+.assignee-book { color: var(--green); }
+.assignee-remove { color: var(--red); }
+.assignee-pencil:hover, .assignee-book:hover, .assignee-remove:hover { background: var(--bg-alt); }
+.assignee-pencil:disabled, .assignee-book:disabled, .assignee-remove:disabled, .assignee-input:disabled { opacity: 0.6; cursor: default; }
 .assignee-error {
   font-size: 10px; line-height: 1.2; color: #932b20; white-space: normal;
 }
@@ -237,9 +244,13 @@ button.toggle-btn:hover { background: var(--bg-alt); }
 .assignee-input::placeholder { color: #5a0a0a; opacity: 0.85; }
 .assignee-input:hover { border-color: #8f2419; }
 .assignee-input:focus { outline: 2px solid var(--purple); outline-offset: 1px; cursor: text; }
-.row.position.assigned .assignee-input {
+.row.position.booked .assignee-input {
   background: linear-gradient(to right, #eaf7ec, #7fc98c);
   border-color: #2f9e44; color: #14401d; font-weight: 700;
+}
+.row.position.pencilled .assignee-input {
+  background: linear-gradient(to right, #fdf3df, #eec371);
+  border-color: var(--amber); color: #5c3d05; font-weight: 700;
 }
 .day-cells { grid-column: 5 / -1; display: grid; grid-template-columns: repeat(var(--day-count), var(--day-w)); height: 100%; }
 .day-qty {
@@ -252,7 +263,8 @@ button.toggle-btn:hover { background: var(--bg-alt); }
 .day-qty.q2 { background: #ef9d9d; color: #fff; }
 .day-qty.q3 { background: #e46e6e; color: #fff; }
 .day-qty.q4 { background: #d93b3b; color: #fff; }
-.day-qty.assigned { background: #a9dcae; border-right: 1px solid #eafbea; }
+.day-qty.booked { background: #a9dcae; border-right: 1px solid #eafbea; }
+.day-qty.pencilled { background: #f2d38f; border-right: 1px solid #fbf1dc; }
 
 /* position:fixed + attached to <body> - floats above the sticky/scrolling
    grid regardless of any ancestor's overflow:hidden clipping. */

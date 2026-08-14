@@ -19,6 +19,14 @@ export interface AssignPositionResult {
   positionIndex: number;
   positionId: number;
   assignee: string;
+  offerStatus: 'pencilled' | 'booked';
+}
+
+export interface UnassignPositionResult {
+  jobRef: string;
+  phaseTitle: string;
+  positionIndex: number;
+  positionId: number;
 }
 
 function resolveBridgePath() {
@@ -95,6 +103,15 @@ export async function assignCrewPosition(params: {
   phaseTitle: string;
   positionIndex: number;
   personName: string;
+  offerStatus: 'pencilled' | 'booked';
 }): Promise<AssignPositionResult> {
   return runCrewOdbcWrite<AssignPositionResult>({ operation: 'assign-position', ...params });
+}
+
+export async function unassignCrewPosition(params: {
+  jobRef: string;
+  phaseTitle: string;
+  positionIndex: number;
+}): Promise<UnassignPositionResult> {
+  return runCrewOdbcWrite<UnassignPositionResult>({ operation: 'unassign-position', ...params });
 }

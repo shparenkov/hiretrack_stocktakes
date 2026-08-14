@@ -177,6 +177,8 @@ def read_crew_data(cursor):
     for j in jobs:
         headers = headers_by_job.get(j.JobNo, [])
         phases = []
+        activity_start = None
+        activity_end = None
         for h in headers:
             acts = activities_by_header.get(h.Idx, [])
             if not acts:
@@ -199,12 +201,16 @@ def read_crew_data(cursor):
                         if d and d in date_index:
                             qty[date_index[d]] = 1
                     assignee = names.get(p.xPerson) if p.xPerson else None
+                    # TShiftStatus: 0 ssUnprocessed, 2 ssPencilled, 3 ssBooked
+                    # (1 ssInProgress isn't used by this write path, falls
+                    # back to Unprocessed if ever seen).
+                    position_status = {0: "Unprocessed", 2: "Pencilled", 3: "Booked"}.get(p.Status, "Unprocessed")
                     positions_out.append(
                         {
                             "role": role_text,
                             "position": role_text,
                             "description": (p.Description or "").strip(),
-                            "status": "Processed" if assignee else "Unprocessed",
+                            "status": position_status,
                             "assignee": assignee,
                             "qtyPerDay": qty,
                         }
@@ -218,6 +224,8 @@ def read_crew_data(cursor):
                         "positions": positions_out,
                     }
                 )
+                activity_start = p_start if activity_start is None else min(activity_start, p_start)
+                activity_end = p_end if activity_end is None else max(activity_end, p_end)
 
         if not phases:
             continue
@@ -230,6 +238,12 @@ def read_crew_data(cursor):
                 "name": (j[2] or "").strip(),
                 "start": j[4].date().isoformat(),
                 "end": j[5].date().isoformat(),
+                # Actual crew-activity span (min/max across all phases), used
+                # for the job bar instead of Due Out/Due Back - a job can run
+                # for months while crew is only actually needed on a handful
+                # of days within it.
+                "activityStart": activity_start.isoformat(),
+                "activityEnd": activity_end.isoformat(),
                 "crewBoss": managers.get(j[6], "Unassigned"),
                 "client": clients.get(j[7]) or "—",
                 "jobType": job_types.get(j[8]) or "—",

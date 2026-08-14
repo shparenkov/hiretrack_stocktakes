@@ -65,7 +65,9 @@ function jobDayNumber(phase, dateStr) {
 const state = {
   expandedJobs: new Set(),
   expandedPhases: new Set(), // key: `${jobId}::${phaseIdx}`
-  statusFilter: 1, // show jobs with statusRank >= this (defcon.SortOrder)
+  statusFilter: 1, // defcon.SortOrder to match
+  statusAndAbove: false, // false = exact match, true = >= statusFilter
+  searchQuery: "",
   groupBy: "none",
   assignErrors: new Map(), // key: `${jobId}::${phaseIdx}::${posIdx}` -> message
   assignPending: new Set(), // key: `${jobId}::${phaseIdx}::${posIdx}`
@@ -119,12 +121,17 @@ function barStyle(s, e) {
 
 function renderJobRow(job) {
   const expanded = state.expandedJobs.has(job.id);
-  const jobStart = new Date(job.start + "T00:00:00");
-  const jobEnd = new Date(job.end + "T00:00:00");
+  // The bar spans actual crew-activity dates (min/max across all phases),
+  // not Due Out/Due Back - a job can run for months while crew is only
+  // actually needed on a handful of days within it.
+  const barStart = job.activityStart || job.start;
+  const barEnd = job.activityEnd || job.end;
+  const jobStart = new Date(barStart + "T00:00:00");
+  const jobEnd = new Date(barEnd + "T00:00:00");
   const statusClass = STATUS_CLASS[job.status] || "";
 
-  const s = colFor(job.start); // may be < 1 if the job started before the window
-  const e = colFor(job.end) + 1; // may be > DAY_COUNT+1 if it ends after the window
+  const s = colFor(barStart); // may be < 1 if it started before the window
+  const e = colFor(barEnd) + 1; // may be > DAY_COUNT+1 if it ends after the window
   const sClamped = Math.max(s, 1);
   const eClamped = Math.min(e, DAY_COUNT + 1);
   const overlapsWindow = sClamped < eClamped;
@@ -138,11 +145,11 @@ function renderJobRow(job) {
   // to the bar itself, not the whole day-track — otherwise their position drifts
   // once the bar gets clamped/truncated by the window filter.
   const barHtml = overlapsWindow
-    ? `<div class="bar${truncStart ? " trunc-start" : ""}${truncEnd ? " trunc-end" : ""}" style="${barStyle(sClamped, eClamped)}" title="${job.name}: ${job.start} → ${job.end}">
+    ? `<div class="bar${truncStart ? " trunc-start" : ""}${truncEnd ? " trunc-end" : ""}" style="${barStyle(sClamped, eClamped)}" title="${job.name}: ${barStart} → ${barEnd}">
         ${truncStart ? `<span class="trunc-marker left">&laquo;</span>` : ""}
         ${truncEnd ? `<span class="trunc-marker right">&raquo;</span>` : ""}
-        ${showStart ? `<span class="bar-label start">Job Starts</span>` : ""}
-        ${showEnd ? `<span class="bar-label end">Job Ends</span>` : ""}
+        ${showStart ? `<span class="bar-label start">Crew Starts</span>` : ""}
+        ${showEnd ? `<span class="bar-label end">Crew Ends</span>` : ""}
       </div>`
     : "";
 
@@ -226,15 +233,17 @@ function qtyClass(q) {
 
 function renderPositionRow(job, phase, position, phaseIdx, posIdx) {
   const s = colFor(phase.start);
-  const assigned = !!position.assignee;
+  const isBooked = position.status === "Booked";
+  const isPencilled = position.status === "Pencilled";
+  const stateClass = isBooked ? "booked" : isPencilled ? "pencilled" : "unprocessed";
   const dayCells = [];
   for (let i = 0; i < DAY_COUNT; i++) {
     const dayInPhase = i - (s - 1);
     const q = dayInPhase >= 0 && dayInPhase < (position.qtyPerDay || []).length ? position.qtyPerDay[dayInPhase] : null;
     if (q === null) {
       dayCells.push(`<div class="day-qty"></div>`);
-    } else if (assigned) {
-      dayCells.push(`<div class="day-qty ${q ? "assigned" : ""}"></div>`);
+    } else if (isBooked || isPencilled) {
+      dayCells.push(`<div class="day-qty ${q ? stateClass : ""}"></div>`);
     } else {
       dayCells.push(`<div class="day-qty ${qtyClass(q)}">${q}</div>`);
     }
@@ -242,7 +251,8 @@ function renderPositionRow(job, phase, position, phaseIdx, posIdx) {
   const key = `${job.id}::${phaseIdx}::${posIdx}`;
   const pending = state.assignPending.has(key);
   const error = state.assignErrors.get(key);
-  return `<div class="row position${assigned ? " assigned" : ""}">
+  const placeholder = isBooked ? "Забукано" : isPencilled ? "В резерве" : "Unprocessed — назначить...";
+  return `<div class="row position ${stateClass}">
     <div class="cell toggle"></div>
     <div class="cell col-job role-name">${position.role}</div>
     <div class="cell col-name assignee-cell">
@@ -251,19 +261,39 @@ function renderPositionRow(job, phase, position, phaseIdx, posIdx) {
           class="assignee-input"
           type="text"
           autocomplete="off"
-          placeholder="Unprocessed — назначить..."
+          placeholder="${placeholder}"
           value="${state.pendingInput.has(key) ? state.pendingInput.get(key) : (position.assignee || "")}"
           data-job="${job.id}" data-phase="${phaseIdx}" data-pos="${posIdx}"
           ${pending ? "disabled" : ""}
         />
         <button
           type="button"
-          class="assignee-confirm"
-          data-action="confirm-assignee"
+          class="assignee-pencil"
+          data-action="confirm-pencilled"
           data-job="${job.id}" data-phase="${phaseIdx}" data-pos="${posIdx}"
-          title="Подтвердить назначение"
+          title="Поставить под резерв (Pencilled)"
+          ${pending ? "disabled" : ""}
+        >${pending ? "…" : "П"}</button>
+        <button
+          type="button"
+          class="assignee-book"
+          data-action="confirm-booked"
+          data-job="${job.id}" data-phase="${phaseIdx}" data-pos="${posIdx}"
+          title="Забукать (Booked)"
           ${pending ? "disabled" : ""}
         >${pending ? "…" : "&#10003;"}</button>
+        ${
+          position.assignee
+            ? `<button
+                type="button"
+                class="assignee-remove"
+                data-action="remove-assignee"
+                data-job="${job.id}" data-phase="${phaseIdx}" data-pos="${posIdx}"
+                title="Снять человека"
+                ${pending ? "disabled" : ""}
+              >&#10005;</button>`
+            : ""
+        }
       </div>
       ${error ? `<div class="assignee-error">${error}</div>` : ""}
     </div>
@@ -295,7 +325,15 @@ function render() {
 
   const rows = [renderHeader()];
 
-  let visibleJobs = JOBS.filter((j) => (j.statusRank ?? 0) >= state.statusFilter);
+  let visibleJobs = JOBS.filter((j) =>
+    state.statusAndAbove ? (j.statusRank ?? 0) >= state.statusFilter : (j.statusRank ?? 0) === state.statusFilter
+  );
+  const query = state.searchQuery.trim().toLowerCase();
+  if (query) {
+    visibleJobs = visibleJobs.filter(
+      (j) => j.id.toLowerCase().includes(query) || j.name.toLowerCase().includes(query)
+    );
+  }
   const groupKey = GROUP_FIELDS[state.groupBy];
   if (groupKey) {
     visibleJobs = [...visibleJobs].sort((a, b) => String(groupKey(a)).localeCompare(String(groupKey(b)), "ru"));
@@ -355,19 +393,22 @@ document.getElementById("gantt").addEventListener("click", (ev) => {
     if (state.expandedPhases.has(key)) state.expandedPhases.delete(key);
     else state.expandedPhases.add(key);
     render();
-  } else if (btn.dataset.action === "confirm-assignee") {
+  } else if (btn.dataset.action === "confirm-pencilled" || btn.dataset.action === "confirm-booked") {
     const input = btn.parentElement.querySelector(".assignee-input");
-    confirmAssignee(btn.dataset.job, btn.dataset.phase, btn.dataset.pos, input.value);
+    const offerStatus = btn.dataset.action === "confirm-booked" ? "booked" : "pencilled";
+    confirmAssignee(btn.dataset.job, btn.dataset.phase, btn.dataset.pos, input.value, offerStatus);
+  } else if (btn.dataset.action === "remove-assignee") {
+    removeAssignee(btn.dataset.job, btn.dataset.phase, btn.dataset.pos);
   }
 });
 
 // Picking a name only fills the field — nothing is considered assigned until
-// "Подтвердить" is clicked (or Enter pressed). Confirming POSTs to
-// /api/crew-bookings/assign and only applies the change in the UI once
-// HireTrack actually confirms the write - a purely-optimistic update here is
-// what caused assignments to silently "stick" in the browser but never reach
-// HireTrack.
-async function confirmAssignee(jobId, phaseIdx, posIdx, value) {
+// one of the confirm buttons (or Enter, which books) is clicked. Confirming
+// POSTs to /api/crew-bookings/assign and only applies the change in the UI
+// once HireTrack actually confirms the write - a purely-optimistic update
+// here is what caused assignments to silently "stick" in the browser but
+// never reach HireTrack.
+async function confirmAssignee(jobId, phaseIdx, posIdx, value, offerStatus) {
   const job = JOBS.find((j) => j.id === jobId);
   const phase = job.phases[Number(phaseIdx)];
   const position = phase.positions[Number(posIdx)];
@@ -375,9 +416,7 @@ async function confirmAssignee(jobId, phaseIdx, posIdx, value) {
   const personName = value.trim();
 
   if (!personName) {
-    position.assignee = null;
-    state.assignErrors.delete(key);
-    state.pendingInput.delete(key);
+    state.assignErrors.set(key, "Выберите человека перед подтверждением.");
     render();
     return;
   }
@@ -395,14 +434,49 @@ async function confirmAssignee(jobId, phaseIdx, posIdx, value) {
         phaseTitle: phase.name,
         positionIndex: Number(posIdx),
         personName,
+        offerStatus,
       }),
     });
     const body = await resp.json();
     if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
     position.assignee = body.assignee || personName;
+    position.status = offerStatus === "booked" ? "Booked" : "Pencilled";
     state.pendingInput.delete(key);
   } catch (e) {
     state.assignErrors.set(key, "Не удалось назначить: " + e.message);
+  } finally {
+    state.assignPending.delete(key);
+    render();
+  }
+}
+
+async function removeAssignee(jobId, phaseIdx, posIdx) {
+  const job = JOBS.find((j) => j.id === jobId);
+  const phase = job.phases[Number(phaseIdx)];
+  const position = phase.positions[Number(posIdx)];
+  const key = `${jobId}::${phaseIdx}::${posIdx}`;
+
+  state.assignPending.add(key);
+  state.assignErrors.delete(key);
+  render();
+
+  try {
+    const resp = await fetch("/api/crew-bookings/unassign", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jobRef: jobId,
+        phaseTitle: phase.name,
+        positionIndex: Number(posIdx),
+      }),
+    });
+    const body = await resp.json();
+    if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
+    position.assignee = null;
+    position.status = "Unprocessed";
+    state.pendingInput.delete(key);
+  } catch (e) {
+    state.assignErrors.set(key, "Не удалось снять: " + e.message);
   } finally {
     state.assignPending.delete(key);
     render();
@@ -413,7 +487,7 @@ document.getElementById("gantt").addEventListener("keydown", (ev) => {
   const input = ev.target.closest(".assignee-input");
   if (!input || ev.key !== "Enter") return;
   ev.preventDefault();
-  confirmAssignee(input.dataset.job, input.dataset.phase, input.dataset.pos, input.value);
+  confirmAssignee(input.dataset.job, input.dataset.phase, input.dataset.pos, input.value, "booked");
 });
 
 // Custom searchable dropdown, replacing the native <datalist> (which doesn't
@@ -583,6 +657,14 @@ document.getElementById("window-apply-custom").addEventListener("click", () => {
 
 document.getElementById("status-filter").addEventListener("change", (ev) => {
   state.statusFilter = Number(ev.target.value);
+  render();
+});
+document.getElementById("status-and-above").addEventListener("change", (ev) => {
+  state.statusAndAbove = ev.target.checked;
+  render();
+});
+document.getElementById("job-search").addEventListener("input", (ev) => {
+  state.searchQuery = ev.target.value;
   render();
 });
 document.getElementById("group-by").addEventListener("change", (ev) => {

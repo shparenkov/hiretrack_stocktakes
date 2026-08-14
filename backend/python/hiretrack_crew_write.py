@@ -9,31 +9,45 @@ import pyodbc
 # point CREW_WRITE_ODBC_DSN at the same DSN as CREW_ODBC_DSN unless that DSN
 # is actually writable (e.g. "Claude Test" while validating against TestDB).
 #
-# Minimal field-diff write, empirically confirmed by comparing an
-# Unprocessed vs a manually-Processed CrewPositions row in HireTrack NX
-# itself (see DB_QUERY_REFERENCE.md, personnel.crew_scheduling section):
-#   CrewPositions: xPerson, Status=3 (ssBooked), OrderStatus=1,
-#                  LowestShiftStatus=3
-#   CrewShifts (all rows for that position): Status=3 (ssBooked)
-# This assigns into an existing empty position row - it does not clone or
-# create rows, matching how HireTrack NX's own client does a manual
-# assignment.
+# Two writes: CrewPositions/CrewShifts (TShiftStatus: 0 ssUnprocessed,
+# 2 ssPencilled, 3 ssBooked) AND CrewPositionOffers (TCrewOfferStatus:
+# 6 cosPencilled, 7 cosBooked, 8 cosCancelled - see db.sql's CREATE TABLE
+# "CrewPositionOffers" and trCrewPositionOffersBEFORE). Both are required -
+# HireTrack NX's position detail view reads CrewPositionOffers specifically,
+# so writing only the flat CrewPositions/CrewShifts fields (the original,
+# incomplete version of this script) makes a position look assigned in the
+# grid while showing no real offer status once opened.
+#
+# Confirmed live (production CrewPositionOffers, 7000+ rows) that switching
+# who's assigned to a position is done by cancelling the old active offer
+# (OfferStatus -> 8) and INSERTing a fresh row for the new person, not
+# updating the old row's xPerson in place - multiple historical rows per
+# position (shortlisted/contacted/rejected candidates) is normal. The
+# trigger also SIGNALs an error if you try to set a second row to
+# OfferStatus=7 while another row for the same position is still 7, so any
+# previously-booked offer must be cancelled first.
+#
+# Baseline "Unprocessed" field values (Status/OrderStatus/LowestShiftStatus)
+# empirically confirmed against thousands of untouched xPerson IS NULL rows:
+# (0, 0, 0).
 
 DSN = os.environ.get("CREW_WRITE_ODBC_DSN")
 QUERY_TIMEOUT = int(os.environ.get("CREW_WRITE_ODBC_QUERY_TIMEOUT", "60"))
 sys.stdin.reconfigure(encoding="utf-8")
 sys.stdout.reconfigure(encoding="utf-8")
 
+# TShiftStatus (CrewPositions.Status / CrewShifts.Status)
+SHIFT_STATUS_UNPROCESSED = 0
+SHIFT_STATUS_PENCILLED = 2
+SHIFT_STATUS_BOOKED = 3
 
-def assign_position(cursor, params):
-    job_ref = params.get("jobRef")
-    phase_title = params.get("phaseTitle")
-    position_index = params.get("positionIndex")
-    person_name = params.get("personName")
-    if not job_ref or not phase_title or position_index is None or not person_name:
-        raise ValueError("assign-position requires 'jobRef', 'phaseTitle', 'positionIndex' and 'personName'")
-    position_index = int(position_index)
+# TCrewOfferStatus (CrewPositionOffers.OfferStatus)
+OFFER_STATUS_PENCILLED = 6
+OFFER_STATUS_BOOKED = 7
+OFFER_STATUS_CANCELLED = 8
 
+
+def resolve_position(cursor, job_ref, phase_title, position_index):
     cursor.execute("SELECT JobNo FROM JOBS WHERE Job_Ref = ?", job_ref)
     job = cursor.fetchone()
     if not job:
@@ -61,23 +75,20 @@ def assign_position(cursor, params):
     positions = cursor.fetchall()
     if position_index >= len(positions):
         raise ValueError(f"position_index {position_index} out of range, phase only has {len(positions)} position(s)")
-    target_position = positions[position_index].IDX
+    return positions[position_index].IDX
 
+
+def resolve_person(cursor, person_name):
     # CREW=TRUE AND not archived - same filter the read bridge uses to build
     # the roster dropdown. Without it, an archived/inactive duplicate with
     # the same FullName as an active crew member can get picked instead
     # (confirmed live: "Oleg Bogdan" NameCounter 168, archived, matched
-    # before the real active NameCounter 227 - HireTrack NX's own UI doesn't
-    # render archived people in this view, so the position looked empty
-    # even though xPerson was technically set).
+    # before the real active NameCounter 227).
+    #
     # NexusDB quirk confirmed live: combining a parameterized "FullName = ?"
     # with "(Archived IS NULL OR Archived = FALSE)" in the same query raises
-    # "Type mismatch (nxtShortString <> nxtBLOB)" - the query engine
-    # misreads the FullName parameter's type once that OR/IS-NULL clause is
-    # present, even though the same OR/IS-NULL construct works fine with no
-    # parameter (see hiretrack_crew_read.py's crew_roster query) and
-    # "CREW = TRUE" alone works fine with a parameter. Filter CREW in SQL,
-    # filter Archived in Python afterward to avoid the buggy combination.
+    # "Type mismatch (nxtShortString <> nxtBLOB)". Filter CREW in SQL, filter
+    # Archived in Python afterward to avoid the buggy combination.
     cursor.execute(
         "SELECT NameCounter, FullName, Archived FROM Name2 WHERE FullName = ? AND CREW = TRUE",
         person_name,
@@ -85,14 +96,60 @@ def assign_position(cursor, params):
     people = [p for p in cursor.fetchall() if not p.Archived]
     if not people:
         raise ValueError(f"No active crew Name2 row with FullName = {person_name!r}")
-    person = people[0]
+    return people[0]
+
+
+def assign_position(cursor, params):
+    job_ref = params.get("jobRef")
+    phase_title = params.get("phaseTitle")
+    position_index = params.get("positionIndex")
+    person_name = params.get("personName")
+    offer_status_name = params.get("offerStatus", "booked")
+    if not job_ref or not phase_title or position_index is None or not person_name:
+        raise ValueError("assign-position requires 'jobRef', 'phaseTitle', 'positionIndex' and 'personName'")
+    if offer_status_name not in ("pencilled", "booked"):
+        raise ValueError("assign-position 'offerStatus' must be 'pencilled' or 'booked'")
+    position_index = int(position_index)
+
+    target_position = resolve_position(cursor, job_ref, phase_title, position_index)
+    person = resolve_person(cursor, person_name)
+
+    if offer_status_name == "booked":
+        shift_status = SHIFT_STATUS_BOOKED
+        offer_status = OFFER_STATUS_BOOKED
+        order_status = 1
+        # A second row for this position going to OfferStatus=7 while
+        # another is still 7 makes trCrewPositionOffersBEFORE SIGNAL an
+        # error ("Crew already booked for this position...") - cancel any
+        # existing booked offer first, matching the real cancel-then-insert
+        # pattern seen in production data.
+        cursor.execute(
+            "UPDATE CrewPositionOffers SET OfferStatus = ? WHERE xPosition = ? AND OfferStatus = ?",
+            OFFER_STATUS_CANCELLED,
+            target_position,
+            OFFER_STATUS_BOOKED,
+        )
+    else:
+        shift_status = SHIFT_STATUS_PENCILLED
+        offer_status = OFFER_STATUS_PENCILLED
+        order_status = 0
 
     cursor.execute(
-        "UPDATE CrewPositions SET xPerson = ?, Status = 3, OrderStatus = 1, LowestShiftStatus = 3 WHERE IDX = ?",
+        "INSERT INTO CrewPositionOffers (xPosition, xPerson, OfferStatus, OfferStatusDate) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
+        target_position,
         person.NameCounter,
+        offer_status,
+    )
+
+    cursor.execute(
+        "UPDATE CrewPositions SET xPerson = ?, Status = ?, OrderStatus = ?, LowestShiftStatus = ? WHERE IDX = ?",
+        person.NameCounter,
+        shift_status,
+        order_status,
+        shift_status,
         target_position,
     )
-    cursor.execute("UPDATE CrewShifts SET Status = 3 WHERE xPosition = ?", target_position)
+    cursor.execute("UPDATE CrewShifts SET Status = ? WHERE xPosition = ?", shift_status, target_position)
 
     return {
         "jobRef": job_ref,
@@ -100,6 +157,40 @@ def assign_position(cursor, params):
         "positionIndex": position_index,
         "positionId": target_position,
         "assignee": person.FullName,
+        "offerStatus": offer_status_name,
+    }
+
+
+def unassign_position(cursor, params):
+    job_ref = params.get("jobRef")
+    phase_title = params.get("phaseTitle")
+    position_index = params.get("positionIndex")
+    if not job_ref or not phase_title or position_index is None:
+        raise ValueError("unassign-position requires 'jobRef', 'phaseTitle' and 'positionIndex'")
+    position_index = int(position_index)
+
+    target_position = resolve_position(cursor, job_ref, phase_title, position_index)
+
+    cursor.execute(
+        "UPDATE CrewPositionOffers SET OfferStatus = ? WHERE xPosition = ? AND (OfferStatus = ? OR OfferStatus = ?)",
+        OFFER_STATUS_CANCELLED,
+        target_position,
+        OFFER_STATUS_PENCILLED,
+        OFFER_STATUS_BOOKED,
+    )
+    cursor.execute(
+        "UPDATE CrewPositions SET xPerson = NULL, Status = ?, OrderStatus = 0, LowestShiftStatus = ? WHERE IDX = ?",
+        SHIFT_STATUS_UNPROCESSED,
+        SHIFT_STATUS_UNPROCESSED,
+        target_position,
+    )
+    cursor.execute("UPDATE CrewShifts SET Status = ? WHERE xPosition = ?", SHIFT_STATUS_UNPROCESSED, target_position)
+
+    return {
+        "jobRef": job_ref,
+        "phaseTitle": phase_title,
+        "positionIndex": position_index,
+        "positionId": target_position,
     }
 
 
@@ -121,6 +212,8 @@ def main():
         cursor = connection.cursor()
         if operation == "assign-position":
             result = assign_position(cursor, request)
+        elif operation == "unassign-position":
+            result = unassign_position(cursor, request)
         else:
             raise ValueError(f"Unsupported crew write operation: {operation}")
         json.dump({"ok": True, "result": result}, sys.stdout, ensure_ascii=False)
