@@ -119,6 +119,22 @@ function barStyle(s, e) {
   return `left:${left}px; width:${width}px;`;
 }
 
+// Total shift count for this job on a given calendar day, summed across ALL
+// phases/positions - lets the collapsed job row's purple bar show shift
+// density per day without expanding into Phase -> Position rows to see it
+// (previously only visible per-phase in the Day N(count) footer row).
+function jobDayShiftCount(job, dateStr) {
+  let total = 0;
+  for (const phase of job.phases) {
+    if (dateStr < phase.start || dateStr > phase.end) continue;
+    const dayInPhase = daysBetween(new Date(phase.start + "T00:00:00"), new Date(dateStr + "T00:00:00"));
+    for (const pos of phase.positions) {
+      total += (pos.qtyPerDay || [])[dayInPhase] || 0;
+    }
+  }
+  return total;
+}
+
 function renderJobRow(job) {
   const expanded = state.expandedJobs.has(job.id);
   // The bar spans actual crew-activity dates (min/max across all phases),
@@ -153,6 +169,19 @@ function renderJobRow(job) {
       </div>`
     : "";
 
+  // Per-day shift-count overlay on the bar itself, so density is visible
+  // without expanding Job → Phase → Position. Positioned relative to the
+  // day-track's own columns (independent of the bar's clamping/truncation),
+  // one number per day that actually has shifts that day.
+  const dayCountCells = [];
+  for (let i = 0; i < DAY_COUNT; i++) {
+    const iso = fmt(addDays(start, i));
+    const count = jobDayShiftCount(job, iso);
+    dayCountCells.push(
+      count > 0 ? `<span class="bar-day-count" style="left:${i * DAY_W}px; width:${DAY_W}px;">${count}</span>` : ""
+    );
+  }
+
   return `<div class="row job${expanded ? " expanded" : ""}" data-job="${job.id}">
     <div class="cell toggle">
       <button class="toggle-btn" data-action="toggle-job" data-job="${job.id}">${expanded ? "−" : "+"}</button>
@@ -164,6 +193,7 @@ function renderJobRow(job) {
     <div class="cell col-crew">${job.crewBoss}</div>
     <div class="bar-track">
       ${barHtml}
+      ${dayCountCells.join("")}
     </div>
   </div>`;
 }
