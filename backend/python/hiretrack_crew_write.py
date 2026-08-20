@@ -78,24 +78,34 @@ def resolve_position(cursor, job_ref, phase_title, position_index):
     return positions[position_index].IDX
 
 
+def display_name(surname, forename):
+    # Фамилия Имя (surname first) - matches hiretrack_crew_read.py's own
+    # display_name(), since the frontend sends back exactly what the roster
+    # dropdown showed. Name2.FullName itself stores "Forename Surname" and
+    # can't be reordered in place, so matching must use the same constructed
+    # string the read bridge built, not the raw FullName column.
+    surname = (surname or "").strip()
+    forename = (forename or "").strip()
+    return f"{surname} {forename}".strip()
+
+
 def resolve_person(cursor, person_name):
     # CREW=TRUE AND not archived - same filter the read bridge uses to build
     # the roster dropdown. Without it, an archived/inactive duplicate with
-    # the same FullName as an active crew member can get picked instead
+    # the same name as an active crew member can get picked instead
     # (confirmed live: "Oleg Bogdan" NameCounter 168, archived, matched
     # before the real active NameCounter 227).
     #
-    # NexusDB quirk confirmed live: combining a parameterized "FullName = ?"
-    # with "(Archived IS NULL OR Archived = FALSE)" in the same query raises
-    # "Type mismatch (nxtShortString <> nxtBLOB)". Filter CREW in SQL, filter
-    # Archived in Python afterward to avoid the buggy combination.
-    cursor.execute(
-        "SELECT NameCounter, FullName, Archived FROM Name2 WHERE FullName = ? AND CREW = TRUE",
-        person_name,
-    )
-    people = [p for p in cursor.fetchall() if not p.Archived]
+    # Matches on the constructed Surname-first string in Python rather than
+    # a SQL WHERE, both because FullName's own word order doesn't match it
+    # and because a NexusDB quirk (confirmed live) raises "Type mismatch
+    # (nxtShortString <> nxtBLOB)" when a parameterized string-equality
+    # WHERE is combined with "(Archived IS NULL OR Archived = FALSE)" in the
+    # same query - CREW=TRUE stays in SQL, everything else filters after.
+    cursor.execute("SELECT NameCounter, SURNAME, FORENAME, Archived FROM Name2 WHERE CREW = TRUE")
+    people = [p for p in cursor.fetchall() if not p.Archived and display_name(p.SURNAME, p.FORENAME) == person_name]
     if not people:
-        raise ValueError(f"No active crew Name2 row with FullName = {person_name!r}")
+        raise ValueError(f"No active crew Name2 row with display name {person_name!r}")
     return people[0]
 
 
@@ -156,7 +166,7 @@ def assign_position(cursor, params):
         "phaseTitle": phase_title,
         "positionIndex": position_index,
         "positionId": target_position,
-        "assignee": person.FullName,
+        "assignee": display_name(person.SURNAME, person.FORENAME),
         "offerStatus": offer_status_name,
     }
 

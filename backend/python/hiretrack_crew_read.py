@@ -17,6 +17,16 @@ sys.stdin.reconfigure(encoding="utf-8")
 sys.stdout.reconfigure(encoding="utf-8")
 
 
+def display_name(surname, forename):
+    # Фамилия Имя (surname first) - Name2.FullName itself stores "Forename
+    # Surname" and can't be reordered in place, so every person-facing name
+    # in this app is built from the separate SURNAME/FORENAME columns
+    # instead of trusting FullName's own word order.
+    surname = (surname or "").strip()
+    forename = (forename or "").strip()
+    return f"{surname} {forename}".strip()
+
+
 def read_crew_data(cursor):
     today = date.today()
     horizon = today + timedelta(days=HORIZON_DAYS)
@@ -120,10 +130,10 @@ def read_crew_data(cursor):
     names = {}
     if all_person_ids:
         cursor.execute(
-            f'SELECT NameCounter, FullName FROM Name2 WHERE NameCounter IN ({",".join("?" * len(all_person_ids))})',
+            f'SELECT NameCounter, SURNAME, FORENAME FROM Name2 WHERE NameCounter IN ({",".join("?" * len(all_person_ids))})',
             all_person_ids,
         )
-        names = {r.NameCounter: r.FullName for r in cursor.fetchall()}
+        names = {r.NameCounter: display_name(r.SURNAME, r.FORENAME) for r in cursor.fetchall()}
 
     crewtypes = {}
     if all_type_ids:
@@ -137,10 +147,10 @@ def read_crew_data(cursor):
     managers = {}
     if manager_ids:
         cursor.execute(
-            f'SELECT NameCounter, FullName FROM Name2 WHERE NameCounter IN ({",".join("?" * len(manager_ids))})',
+            f'SELECT NameCounter, SURNAME, FORENAME FROM Name2 WHERE NameCounter IN ({",".join("?" * len(manager_ids))})',
             manager_ids,
         )
-        managers = {r.NameCounter: r.FullName for r in cursor.fetchall()}
+        managers = {r.NameCounter: display_name(r.SURNAME, r.FORENAME) for r in cursor.fetchall()}
 
     client_ids = list({j[7] for j in jobs if j[7]})
     clients = {}
@@ -170,9 +180,11 @@ def read_crew_data(cursor):
         venues = {r.IDX: (r.VenueName or "").strip() for r in cursor.fetchall()}
 
     cursor.execute(
-        "SELECT FullName FROM Name2 WHERE CREW = TRUE AND (Archived IS NULL OR Archived = FALSE) ORDER BY FullName"
+        "SELECT SURNAME, FORENAME FROM Name2 WHERE CREW = TRUE AND (Archived IS NULL OR Archived = FALSE)"
     )
-    crew_roster = sorted({(r.FullName or "").strip() for r in cursor.fetchall() if r.FullName and r.FullName.strip()})
+    crew_roster = sorted(
+        {display_name(r.SURNAME, r.FORENAME) for r in cursor.fetchall() if (r.SURNAME or "").strip() or (r.FORENAME or "").strip()}
+    )
 
     result_jobs = []
     for j in jobs:
