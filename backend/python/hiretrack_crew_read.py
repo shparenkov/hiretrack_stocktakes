@@ -47,7 +47,17 @@ def read_crew_data(cursor):
         today,
     )
     all_jobs = cursor.fetchall()
-    jobs = [j for j in all_jobs if j[4].date() <= horizon][:40]
+    # NOT capped to a fixed count here - jobs without any Crew_header/
+    # CrewActivities data yet (common for Запрос/Бронь jobs where crew
+    # planning hasn't started) get dropped further down (`if not phases:
+    # continue`), and that drop rate isn't evenly spread across due dates.
+    # Capping the raw candidate list by "Due Out ASC" here (confirmed live,
+    # 2026-08-27) kept mostly status=4 "В работе" jobs, which cluster near
+    # the front of the sort, and silently starved out dozens of legitimate
+    # Запрос/Бронь/Подтверждено jobs whose crew phases exist but whose Due
+    # Out sorted past the cutoff. The HORIZON_DAYS window (60 days) is
+    # already the real bound on candidate volume.
+    jobs = [j for j in all_jobs if j[4].date() <= horizon]
     job_nos = [j.JobNo for j in jobs]
 
     cursor.execute("SELECT Defcon_idx, Defcon_text, SortOrder FROM defcon")
