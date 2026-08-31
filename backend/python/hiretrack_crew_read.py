@@ -27,13 +27,11 @@ def display_name(surname, forename):
     return f"{surname} {forename}".strip()
 
 
-def read_crew_data(cursor):
+def _candidate_jobs(cursor):
+    # Shared by the list and per-job detail: every NewCrewing job whose
+    # crewing window overlaps the next HORIZON_DAYS days.
     today = date.today()
     horizon = today + timedelta(days=HORIZON_DAYS)
-
-    # columns by position (some names have spaces, no attribute access):
-    # 0 JobNo, 1 Job_Ref, 2 Job_Title, 3 Status, 4 Due Out, 5 Due Back,
-    # 6 xCrewManager, 7 Client, 8 Type, 9 MainVenue
     cursor.execute(
         """
         SELECT JobNo, Job_Ref, Job_Title, Status, "Due Out", "Due Back", xCrewManager,
@@ -47,17 +45,22 @@ def read_crew_data(cursor):
         today,
     )
     all_jobs = cursor.fetchall()
-    # NOT capped to a fixed count here - jobs without any Crew_header/
-    # CrewActivities data yet (common for Запрос/Бронь jobs where crew
-    # planning hasn't started) get dropped further down (`if not phases:
-    # continue`), and that drop rate isn't evenly spread across due dates.
-    # Capping the raw candidate list by "Due Out ASC" here (confirmed live,
-    # 2026-08-27) kept mostly status=4 "В работе" jobs, which cluster near
-    # the front of the sort, and silently starved out dozens of legitimate
-    # Запрос/Бронь/Подтверждено jobs whose crew phases exist but whose Due
-    # Out sorted past the cutoff. The HORIZON_DAYS window (60 days) is
-    # already the real bound on candidate volume.
-    jobs = [j for j in all_jobs if j[4].date() <= horizon]
+    return [j for j in all_jobs if j[4].date() <= horizon]
+
+
+def read_crew_list(cursor):
+    # Lightweight job list ONLY - JOBS/Crew_header/CrewActivities, deliberately
+    # never CrewPositions/CrewShifts. Confirmed live (2026-08-31): neither
+    # CrewPositions.xCrewRequest nor CrewShifts.xPosition has an index, and a
+    # bulk "WHERE ... IN (...)" against either one falls off a cliff once the
+    # candidate-id list gets past a couple hundred entries - 374 ids measured
+    # at 39s, 82 ids (the single largest job in the dataset) at 0.45s. That's
+    # not a proportional slowdown, it's a cliff, so the fix isn't a smaller
+    # global query - it's not doing the global query at all. Position/shift
+    # detail is fetched on demand, scoped to one job at a time, in
+    # read_job_detail() below - triggered by the frontend when a job row is
+    # actually expanded.
+    jobs = _candidate_jobs(cursor)
     job_nos = [j.JobNo for j in jobs]
 
     cursor.execute("SELECT Defcon_idx, Defcon_text, SortOrder FROM defcon")
@@ -68,90 +71,28 @@ def read_crew_data(cursor):
     headers_by_job = {}
     if job_nos:
         cursor.execute(
-            f'SELECT Idx, XJob, Title FROM Crew_header WHERE XJob IN ({",".join("?" * len(job_nos))})',
+            f'SELECT Idx, XJob FROM Crew_header WHERE XJob IN ({",".join("?" * len(job_nos))})',
             job_nos,
         )
         for h in cursor.fetchall():
-            headers_by_job.setdefault(h.XJob, []).append(h)
+            headers_by_job.setdefault(h.XJob, []).append(h.Idx)
 
-    all_header_ids = [h.Idx for hs in headers_by_job.values() for h in hs]
+    all_header_ids = [hid for hs in headers_by_job.values() for hid in hs]
 
-    # ORDER BY Idx so the resulting position order is deterministic - the
-    # write bridge resolves the same "position index" the UI shows back to a
-    # real CrewPositions.IDX using this exact ordering.
-    crew_by_header = {}
-    if all_header_ids:
-        cursor.execute(
-            f'SELECT Idx, Header, "Type", "Notes" FROM Crew WHERE Header IN ({",".join("?" * len(all_header_ids))}) ORDER BY Idx',
-            all_header_ids,
-        )
-        for c in cursor.fetchall():
-            crew_by_header.setdefault(c.Header, []).append(c)
-
-    all_crew_ids = [c.Idx for cs in crew_by_header.values() for c in cs]
-    all_type_ids = list({c.Type for cs in crew_by_header.values() for c in cs if c.Type is not None})
-
-    positions_by_crew = {}
-    if all_crew_ids:
-        cursor.execute(
-            f"""
-            SELECT IDX, xCrewRequest, xPerson, CAST(Status AS SMALLINT) AS Status, Description
-            FROM CrewPositions WHERE xCrewRequest IN ({",".join("?" * len(all_crew_ids))})
-            ORDER BY xCrewRequest, IDX
-            """,
-            all_crew_ids,
-        )
-        for p in cursor.fetchall():
-            positions_by_crew.setdefault(p.xCrewRequest, []).append(p)
-
-    all_position_ids = [p.IDX for ps in positions_by_crew.values() for p in ps]
-    all_person_ids = list({p.xPerson for ps in positions_by_crew.values() for p in ps if p.xPerson})
-
-    shifts_by_position = {}
-    if all_position_ids:
-        cursor.execute(
-            f"""
-            SELECT IDX, xActivity, xPosition, CAST(BookingState AS SMALLINT) AS BookingState,
-                   CAST(Status AS SMALLINT) AS Status, "Notes"
-            FROM CrewShifts WHERE xPosition IN ({",".join("?" * len(all_position_ids))})
-            """,
-            all_position_ids,
-        )
-        for s in cursor.fetchall():
-            shifts_by_position.setdefault(s.xPosition, []).append(s)
-
-    all_activity_ids = list({s.xActivity for ss in shifts_by_position.values() for s in ss if s.xActivity})
-
-    activities_by_header = {}
-    activity_by_id = {}
+    # Just the date range per header (not positions/shifts) - cheap even in
+    # bulk (confirmed live: 12063 rows across 82 headers in 0.7s), used only
+    # to compute each job's activity-span bar while collapsed.
+    activity_dates_by_header = {}
     if all_header_ids:
         cursor.execute(
             f"""
-            SELECT IDX, xArea, ActivityDate, Description
+            SELECT xArea, ActivityDate
             FROM CrewActivities WHERE xArea IN ({",".join("?" * len(all_header_ids))})
-            ORDER BY xArea, ActivityDate
             """,
             all_header_ids,
         )
         for a in cursor.fetchall():
-            activities_by_header.setdefault(a.xArea, []).append(a)
-            activity_by_id[a.IDX] = a
-
-    names = {}
-    if all_person_ids:
-        cursor.execute(
-            f'SELECT NameCounter, SURNAME, FORENAME FROM Name2 WHERE NameCounter IN ({",".join("?" * len(all_person_ids))})',
-            all_person_ids,
-        )
-        names = {r.NameCounter: display_name(r.SURNAME, r.FORENAME) for r in cursor.fetchall()}
-
-    crewtypes = {}
-    if all_type_ids:
-        cursor.execute(
-            f'SELECT Crewindex, CrewText FROM CREWTYPE WHERE Crewindex IN ({",".join("?" * len(all_type_ids))})',
-            all_type_ids,
-        )
-        crewtypes = {r.Crewindex: (r.CrewText or "").strip() for r in cursor.fetchall()}
+            activity_dates_by_header.setdefault(a.xArea, []).append(a.ActivityDate)
 
     manager_ids = list({j.xCrewManager for j in jobs if j.xCrewManager})
     managers = {}
@@ -198,97 +139,10 @@ def read_crew_data(cursor):
 
     result_jobs = []
     for j in jobs:
-        headers = headers_by_job.get(j.JobNo, [])
-        phases = []
-        activity_start = None
-        activity_end = None
-        for h in headers:
-            acts = activities_by_header.get(h.Idx, [])
-            if not acts:
-                continue
-            dates = [a.ActivityDate for a in acts]
-            p_start, p_end = min(dates), max(dates)
-            span = (p_end - p_start).days + 1
-            date_index = {a.ActivityDate: i for i, a in enumerate(acts)}
-            act_date_by_id = {a.IDX: a.ActivityDate for a in acts}
-
-            positions_out = []
-            for c in crew_by_header.get(h.Idx, []):
-                role_text = crewtypes.get(c.Type, f"Type {c.Type}")
-                role_notes = (c.Notes or "").strip()
-                for p in positions_by_crew.get(c.Idx, []):
-                    qty = [0] * span
-                    shift_ids = [None] * span
-                    shift_notes = [""] * span
-                    shift_statuses = [None] * span
-                    for s in shifts_by_position.get(p.IDX, []):
-                        if s.BookingState == 2:  # cancelled
-                            continue
-                        d = act_date_by_id.get(s.xActivity)
-                        if d and d in date_index:
-                            idx = date_index[d]
-                            qty[idx] = 1
-                            shift_ids[idx] = s.IDX
-                            shift_notes[idx] = (s.Notes or "").strip()
-                            # Each CrewShifts row carries its OWN Status - a
-                            # shift added after the position was already
-                            # booked/pencilled starts at 0 (ssUnprocessed,
-                            # "Not Allocated" in HT's own UI) even though the
-                            # position as a whole shows Booked/Pencilled.
-                            # Rendering must use this per-day value, not the
-                            # position's status, or a freshly-added
-                            # not-yet-allocated shift wrongly paints green.
-                            shift_statuses[idx] = s.Status
-                    assignee = names.get(p.xPerson) if p.xPerson else None
-                    # TShiftStatus: 0 ssUnprocessed, 2 ssPencilled, 3 ssBooked
-                    # (1 ssInProgress isn't used by this write path, falls
-                    # back to Unprocessed if ever seen).
-                    position_status = {0: "Unprocessed", 2: "Pencilled", 3: "Booked"}.get(p.Status, "Unprocessed")
-                    positions_out.append(
-                        {
-                            # Real CrewPositions.IDX - the write bridge
-                            # (assign/unassign/sync-shifts) addresses the row
-                            # directly by this, instead of re-deriving "the
-                            # Nth position" by index at write time (which
-                            # could silently target a different row if
-                            # positions were added/removed since the page
-                            # loaded).
-                            "positionId": p.IDX,
-                            "role": role_text,
-                            "position": role_text,
-                            "description": (p.Description or "").strip(),
-                            "status": position_status,
-                            "assignee": assignee,
-                            "qtyPerDay": qty,
-                            # Role.Notes (Crew.Notes) is shared by every
-                            # CrewPositions slot under the same Crew row (e.g.
-                            # all 3 slots of a "3x Rigger" request) - crewId
-                            # lets the frontend update siblings in one write.
-                            "crewId": c.Idx,
-                            "roleNotes": role_notes,
-                            # Shift.Notes (CrewShifts.Notes) is per day; null
-                            # entries mean no CrewShifts row exists that day
-                            # for this position (nothing to attach a note to).
-                            "shiftIds": shift_ids,
-                            "shiftNotes": shift_notes,
-                            "shiftStatuses": shift_statuses,
-                        }
-                    )
-            if positions_out:
-                phases.append(
-                    {
-                        "name": h.Title or "Crew",
-                        "start": p_start.isoformat(),
-                        "end": p_end.isoformat(),
-                        "positions": positions_out,
-                    }
-                )
-                activity_start = p_start if activity_start is None else min(activity_start, p_start)
-                activity_end = p_end if activity_end is None else max(activity_end, p_end)
-
-        if not phases:
-            continue
-
+        header_ids = headers_by_job.get(j.JobNo, [])
+        all_dates = [d for hid in header_ids for d in activity_dates_by_header.get(hid, [])]
+        activity_start = min(all_dates) if all_dates else j[4].date()
+        activity_end = max(all_dates) if all_dates else j[5].date()
         result_jobs.append(
             {
                 "id": (j[1] or "").strip(),
@@ -297,21 +151,169 @@ def read_crew_data(cursor):
                 "name": (j[2] or "").strip(),
                 "start": j[4].date().isoformat(),
                 "end": j[5].date().isoformat(),
-                # Actual crew-activity span (min/max across all phases), used
-                # for the job bar instead of Due Out/Due Back - a job can run
-                # for months while crew is only actually needed on a handful
-                # of days within it.
                 "activityStart": activity_start.isoformat(),
                 "activityEnd": activity_end.isoformat(),
                 "crewBoss": managers.get(j[6], "Unassigned"),
                 "client": clients.get(j[7]) or "—",
                 "jobType": job_types.get(j[8]) or "—",
                 "venue": venues.get(j[9]) or "—",
-                "phases": phases,
+                # Populated on demand by read_job_detail() when this job's
+                # row is expanded in the UI - see this function's docstring.
+                "phases": [],
             }
         )
 
     return {"jobs": result_jobs, "crewRoster": crew_roster}
+
+
+def read_job_detail(cursor, job_ref):
+    # Position/shift detail for exactly ONE job, scoped tightly enough
+    # (one job's own headers/crew/positions) to stay fast against the
+    # unindexed CrewPositions/CrewShifts columns - see read_crew_list's
+    # docstring. Fetched on demand when a job row is expanded, and
+    # re-fetched periodically while it stays expanded (kept fresh without
+    # needing a page-wide manual refresh).
+    if not job_ref:
+        raise ValueError("crew-job-detail requires 'jobRef'")
+
+    cursor.execute("SELECT JobNo FROM JOBS WHERE Job_Ref = ?", job_ref)
+    job = cursor.fetchone()
+    if not job:
+        raise ValueError(f"No job with Job_Ref = {job_ref!r}")
+
+    cursor.execute("SELECT Idx, Title FROM Crew_header WHERE XJob = ?", job.JobNo)
+    headers = cursor.fetchall()
+    header_ids = [h.Idx for h in headers]
+
+    crew_by_header = {}
+    if header_ids:
+        cursor.execute(
+            f'SELECT Idx, Header, "Type", "Notes" FROM Crew WHERE Header IN ({",".join("?" * len(header_ids))}) ORDER BY Idx',
+            header_ids,
+        )
+        for c in cursor.fetchall():
+            crew_by_header.setdefault(c.Header, []).append(c)
+
+    all_crew_ids = [c.Idx for cs in crew_by_header.values() for c in cs]
+    all_type_ids = list({c.Type for cs in crew_by_header.values() for c in cs if c.Type is not None})
+
+    positions_by_crew = {}
+    if all_crew_ids:
+        cursor.execute(
+            f"""
+            SELECT IDX, xCrewRequest, xPerson, CAST(Status AS SMALLINT) AS Status, Description
+            FROM CrewPositions WHERE xCrewRequest IN ({",".join("?" * len(all_crew_ids))})
+            ORDER BY xCrewRequest, IDX
+            """,
+            all_crew_ids,
+        )
+        for p in cursor.fetchall():
+            positions_by_crew.setdefault(p.xCrewRequest, []).append(p)
+
+    all_position_ids = [p.IDX for ps in positions_by_crew.values() for p in ps]
+    all_person_ids = list({p.xPerson for ps in positions_by_crew.values() for p in ps if p.xPerson})
+
+    shifts_by_position = {}
+    if all_position_ids:
+        cursor.execute(
+            f"""
+            SELECT IDX, xActivity, xPosition, CAST(BookingState AS SMALLINT) AS BookingState,
+                   CAST(Status AS SMALLINT) AS Status, "Notes"
+            FROM CrewShifts WHERE xPosition IN ({",".join("?" * len(all_position_ids))})
+            """,
+            all_position_ids,
+        )
+        for s in cursor.fetchall():
+            shifts_by_position.setdefault(s.xPosition, []).append(s)
+
+    activities_by_header = {}
+    if header_ids:
+        cursor.execute(
+            f"""
+            SELECT IDX, xArea, ActivityDate, Description
+            FROM CrewActivities WHERE xArea IN ({",".join("?" * len(header_ids))})
+            ORDER BY xArea, ActivityDate
+            """,
+            header_ids,
+        )
+        for a in cursor.fetchall():
+            activities_by_header.setdefault(a.xArea, []).append(a)
+
+    names = {}
+    if all_person_ids:
+        cursor.execute(
+            f'SELECT NameCounter, SURNAME, FORENAME FROM Name2 WHERE NameCounter IN ({",".join("?" * len(all_person_ids))})',
+            all_person_ids,
+        )
+        names = {r.NameCounter: display_name(r.SURNAME, r.FORENAME) for r in cursor.fetchall()}
+
+    crewtypes = {}
+    if all_type_ids:
+        cursor.execute(
+            f'SELECT Crewindex, CrewText FROM CREWTYPE WHERE Crewindex IN ({",".join("?" * len(all_type_ids))})',
+            all_type_ids,
+        )
+        crewtypes = {r.Crewindex: (r.CrewText or "").strip() for r in cursor.fetchall()}
+
+    phases = []
+    for h in headers:
+        acts = activities_by_header.get(h.Idx, [])
+        if not acts:
+            continue
+        dates = [a.ActivityDate for a in acts]
+        p_start, p_end = min(dates), max(dates)
+        span = (p_end - p_start).days + 1
+        date_index = {a.ActivityDate: i for i, a in enumerate(acts)}
+        act_date_by_id = {a.IDX: a.ActivityDate for a in acts}
+
+        positions_out = []
+        for c in crew_by_header.get(h.Idx, []):
+            role_text = crewtypes.get(c.Type, f"Type {c.Type}")
+            role_notes = (c.Notes or "").strip()
+            for p in positions_by_crew.get(c.Idx, []):
+                qty = [0] * span
+                shift_ids = [None] * span
+                shift_notes = [""] * span
+                shift_statuses = [None] * span
+                for s in shifts_by_position.get(p.IDX, []):
+                    if s.BookingState == 2:  # cancelled
+                        continue
+                    d = act_date_by_id.get(s.xActivity)
+                    if d and d in date_index:
+                        idx = date_index[d]
+                        qty[idx] = 1
+                        shift_ids[idx] = s.IDX
+                        shift_notes[idx] = (s.Notes or "").strip()
+                        shift_statuses[idx] = s.Status
+                assignee = names.get(p.xPerson) if p.xPerson else None
+                position_status = {0: "Unprocessed", 2: "Pencilled", 3: "Booked"}.get(p.Status, "Unprocessed")
+                positions_out.append(
+                    {
+                        "positionId": p.IDX,
+                        "role": role_text,
+                        "position": role_text,
+                        "description": (p.Description or "").strip(),
+                        "status": position_status,
+                        "assignee": assignee,
+                        "qtyPerDay": qty,
+                        "crewId": c.Idx,
+                        "roleNotes": role_notes,
+                        "shiftIds": shift_ids,
+                        "shiftNotes": shift_notes,
+                        "shiftStatuses": shift_statuses,
+                    }
+                )
+        if positions_out:
+            phases.append(
+                {
+                    "name": h.Title or "Crew",
+                    "start": p_start.isoformat(),
+                    "end": p_end.isoformat(),
+                    "positions": positions_out,
+                }
+            )
+
+    return {"jobRef": job_ref, "phases": phases}
 
 
 def main():
@@ -328,7 +330,9 @@ def main():
     try:
         cursor = connection.cursor()
         if operation == "crew-data":
-            result = read_crew_data(cursor)
+            result = read_crew_list(cursor)
+        elif operation == "crew-job-detail":
+            result = read_job_detail(cursor, request.get("jobRef"))
         else:
             raise ValueError(f"Unsupported crew read operation: {operation}")
         json.dump({"ok": True, "result": result}, sys.stdout, ensure_ascii=False)

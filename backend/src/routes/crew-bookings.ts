@@ -1,6 +1,6 @@
 import { Request, Response, Router } from 'express';
 import { z } from 'zod';
-import { getCrewBookingsData } from '../services/hiretrack-crew-read';
+import { getCrewBookingsData, getCrewJobDetail } from '../services/hiretrack-crew-read';
 import {
   assignCrewPosition,
   setCrewRoleNote,
@@ -64,6 +64,20 @@ crewBookingsRouter.get('/data', async (req: Request, res: Response) => {
   try {
     const forceRefresh = req.query.refresh === '1' || req.query.refresh === 'true';
     const data = await getCrewBookingsData({ forceRefresh });
+    res.json(data);
+  } catch (error) {
+    res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+crewBookingsRouter.get('/job-detail', async (req: Request, res: Response) => {
+  const jobRef = typeof req.query.jobRef === 'string' ? req.query.jobRef : '';
+  if (!jobRef) {
+    res.status(400).json({ error: "'jobRef' query param is required" });
+    return;
+  }
+  try {
+    const data = await getCrewJobDetail(jobRef);
     res.json(data);
   } catch (error) {
     res.status(502).json({ error: error instanceof Error ? error.message : String(error) });

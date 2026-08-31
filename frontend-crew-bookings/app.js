@@ -457,19 +457,71 @@ function render() {
   }
 }
 
+// Position/shift detail for a job is fetched on demand rather than bundled
+// into the initial list load - see hiretrack_crew_read.py's
+// read_crew_list() docstring for why (the bulk query across every
+// candidate job's positions/shifts falls off a performance cliff past a
+// couple hundred ids; scoped to one job at a time it's ~1s even for the
+// largest job in production). `job.phases` starts empty from the list
+// endpoint and gets filled in here once a job's row is actually expanded.
+const jobDetailTimers = new Map(); // jobId -> intervalId
+const JOB_DETAIL_REFRESH_MS = 25000;
+
+async function loadJobDetail(jobId) {
+  const job = JOBS.find((j) => j.id === jobId);
+  if (!job) return;
+  try {
+    const resp = await fetch(`/api/crew-bookings/job-detail?jobRef=${encodeURIComponent(jobId)}`);
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      throw new Error(text || `HTTP ${resp.status}`);
+    }
+    const data = await resp.json();
+    job.phases = data.phases;
+    render();
+  } catch (e) {
+    console.error("Не удалось загрузить детали работы " + jobId + ":", e);
+  }
+}
+
+// Expanding a job fetches its detail immediately, then keeps it fresh with
+// a periodic re-fetch for as long as it stays expanded - this is what lets
+// the page do without a page-wide manual refresh button (see
+// forceRefreshNow) while someone actually has a job open and working in it.
+async function expandJob(jobId) {
+  state.expandedJobs.add(jobId);
+  render();
+  await loadJobDetail(jobId);
+  const job = JOBS.find((j) => j.id === jobId);
+  if (job) job.phases.forEach((_, idx) => state.expandedPhases.add(`${jobId}::${idx}`));
+  render();
+  if (!jobDetailTimers.has(jobId)) {
+    jobDetailTimers.set(jobId, setInterval(() => loadJobDetail(jobId), JOB_DETAIL_REFRESH_MS));
+  }
+}
+
+function collapseJob(jobId) {
+  state.expandedJobs.delete(jobId);
+  if (jobDetailTimers.has(jobId)) {
+    clearInterval(jobDetailTimers.get(jobId));
+    jobDetailTimers.delete(jobId);
+  }
+  for (const key of Array.from(state.expandedPhases)) {
+    if (key.startsWith(`${jobId}::`)) state.expandedPhases.delete(key);
+  }
+}
+
 document.getElementById("gantt").addEventListener("click", (ev) => {
   const btn = ev.target.closest("[data-action]");
   if (!btn) return;
   if (btn.dataset.action === "toggle-job") {
     const id = btn.dataset.job;
     if (state.expandedJobs.has(id)) {
-      state.expandedJobs.delete(id);
+      collapseJob(id);
+      render();
     } else {
-      state.expandedJobs.add(id);
-      const job = JOBS.find((j) => j.id === id);
-      job.phases.forEach((_, idx) => state.expandedPhases.add(`${id}::${idx}`));
+      expandJob(id);
     }
-    render();
   } else if (btn.dataset.action === "toggle-phase") {
     const key = `${btn.dataset.job}::${btn.dataset.phase}`;
     if (state.expandedPhases.has(key)) state.expandedPhases.delete(key);
@@ -490,11 +542,11 @@ document.getElementById("gantt").addEventListener("click", (ev) => {
   }
 });
 
-// Highlights the "Обновить" button briefly - used when a write is rejected
-// as stale, to point at the fix (refresh) rather than just naming the
-// problem.
+// Highlights the freshness indicator briefly - used when a write is
+// rejected as stale, to point at the fix (click it to refresh now) rather
+// than just naming the problem.
 function flashRefreshButton() {
-  const btn = document.getElementById("refresh-data");
+  const btn = document.getElementById("data-freshness");
   btn.classList.add("flash");
   setTimeout(() => btn.classList.remove("flash"), 2500);
 }
@@ -502,12 +554,13 @@ function flashRefreshButton() {
 // A 409 means the write bridge's optimistic-concurrency check rejected the
 // request - the position changed in HireTrack (or another tab) since this
 // page last loaded it. Surfaced distinctly from a generic failure so the
-// fix ("Обновить") is obvious instead of looking like a random error.
+// fix (click the freshness indicator to refresh now) is obvious instead of
+// looking like a random error.
 async function throwForResponse(resp) {
   const body = await resp.json().catch(() => ({}));
   if (resp.status === 409 || body.conflict) {
     flashRefreshButton();
-    throw new Error(body.error || "Данные на странице устарели. Нажмите «Обновить».");
+    throw new Error(body.error || "Данные на странице устарели. Нажмите на индикатор обновления.");
   }
   throw new Error(body.error || `HTTP ${resp.status}`);
 }
@@ -851,6 +904,10 @@ function updateFreshnessLabel() {
 }
 setInterval(updateFreshnessLabel, 15000);
 
+// List-only fetch (job metadata, no phases) - see hiretrack_crew_read.py's
+// read_crew_list(). Preserves already-loaded phase detail across refreshes
+// instead of wiping it back to empty, so a job that's currently expanded
+// doesn't flash back to "collapsed-looking" every time the list re-polls.
 async function loadCrewData(options) {
   const forceRefresh = options && options.forceRefresh;
   const url = forceRefresh ? "/api/crew-bookings/data?refresh=1" : "/api/crew-bookings/data";
@@ -860,43 +917,62 @@ async function loadCrewData(options) {
     throw new Error(text || `HTTP ${resp.status}`);
   }
   const data = await resp.json();
-  JOBS = data.jobs.map((j) => ({ ...j, crewBoss: j.crewBoss || "Unassigned" }));
+  const existingById = new Map(JOBS.map((j) => [j.id, j]));
+  JOBS = data.jobs.map((j) => {
+    const existing = existingById.get(j.id);
+    return {
+      ...j,
+      crewBoss: j.crewBoss || "Unassigned",
+      phases: existing && existing.phases && existing.phases.length ? existing.phases : j.phases,
+    };
+  });
   CREW = data.crewRoster;
   lastFetchedAt = data.fetchedAt ? new Date(data.fetchedAt) : new Date();
   updateFreshnessLabel();
 }
 
-document.getElementById("refresh-data").addEventListener("click", async () => {
-  const btn = document.getElementById("refresh-data");
-  const originalText = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = "Обновляю...";
+// No page-wide manual refresh button - the job list and every expanded
+// job's detail already refresh themselves on their own timers (see
+// JOB_DETAIL_REFRESH_MS above and the list interval near boot() below).
+// The freshness indicator doubles as an immediate "refresh right now"
+// trigger instead, for the one case a timer can't cover: someone telling
+// you "I just changed it in HT, go ahead" and wanting to trust the screen
+// immediately rather than wait out the next tick.
+async function forceRefreshNow() {
+  const el = document.getElementById("data-freshness");
+  el.disabled = true;
+  const originalText = el.textContent;
+  el.textContent = "Обновляю...";
   try {
     await loadCrewData({ forceRefresh: true });
+    await Promise.all(Array.from(state.expandedJobs).map((id) => loadJobDetail(id)));
     render();
-    btn.textContent = "Обновлено!";
   } catch (e) {
     console.error(e);
     alert("Не удалось получить свежие данные из HireTrack: " + e.message);
-    btn.textContent = "Ошибка";
   } finally {
-    setTimeout(() => {
-      btn.disabled = false;
-      btn.textContent = originalText;
-    }, 1500);
+    el.disabled = false;
+    updateFreshnessLabel();
+    if (el.textContent === "Обновляю...") el.textContent = originalText;
+  }
+}
+document.getElementById("data-freshness").addEventListener("click", forceRefreshNow);
+
+// Background refresh for the job list itself (statuses/dates/crew boss/
+// roster) - independent of any expanded job's own detail timer.
+setInterval(() => {
+  loadCrewData().then(render).catch((e) => console.error("Фоновое обновление списка работ не удалось:", e));
+}, 60000);
+
+document.getElementById("expand-all").addEventListener("click", async () => {
+  for (const job of JOBS) {
+    if (!state.expandedJobs.has(job.id)) {
+      await expandJob(job.id);
+    }
   }
 });
-
-document.getElementById("expand-all").addEventListener("click", () => {
-  JOBS.forEach((job) => {
-    state.expandedJobs.add(job.id);
-    job.phases.forEach((_, idx) => state.expandedPhases.add(`${job.id}::${idx}`));
-  });
-  render();
-});
 document.getElementById("collapse-all").addEventListener("click", () => {
-  state.expandedJobs.clear();
-  state.expandedPhases.clear();
+  Array.from(state.expandedJobs).forEach((id) => collapseJob(id));
   render();
 });
 

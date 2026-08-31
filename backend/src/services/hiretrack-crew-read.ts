@@ -64,6 +64,12 @@ export interface CrewBookingsData {
   fetchedAt: string;
 }
 
+export interface CrewJobDetail {
+  jobRef: string;
+  phases: CrewBookingsPhase[];
+  fetchedAt: string;
+}
+
 function resolveBridgePath() {
   return path.resolve(process.cwd(), 'backend', 'python', 'hiretrack_crew_read.py');
 }
@@ -163,4 +169,16 @@ export async function getCrewBookingsData(options?: { forceRefresh?: boolean }):
     });
   }
   return dataCache.data;
+}
+
+// Position/shift detail for one job, fetched on demand (job row expanded,
+// or a periodic refresh while it stays expanded) rather than folded into
+// the list above - see hiretrack_crew_read.py's read_crew_list() docstring
+// for why the two are split. Deliberately uncached: scoped to one job, this
+// is fast enough (confirmed live: ~1s even for the largest job in
+// production) that every call can just hit HireTrack directly and always
+// be current.
+export async function getCrewJobDetail(jobRef: string): Promise<CrewJobDetail> {
+  const raw = await runCrewOdbcRead<Omit<CrewJobDetail, 'fetchedAt'>>({ operation: 'crew-job-detail', jobRef });
+  return { ...raw, fetchedAt: new Date().toISOString() };
 }
