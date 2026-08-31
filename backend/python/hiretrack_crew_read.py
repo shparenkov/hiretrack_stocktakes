@@ -137,6 +137,7 @@ def read_crew_list(cursor):
         {display_name(r.SURNAME, r.FORENAME) for r in cursor.fetchall() if (r.SURNAME or "").strip() or (r.FORENAME or "").strip()}
     )
 
+    today = date.today()
     result_jobs = []
     for j in jobs:
         header_ids = headers_by_job.get(j.JobNo, [])
@@ -151,6 +152,17 @@ def read_crew_list(cursor):
         # by the old code's "if not phases: continue" - this restores that
         # without reintroducing the slow per-job query.
         if not header_ids or not all_dates:
+            continue
+        # Also skip jobs whose real crew schedule has already fully lapsed,
+        # even though the candidate-job SQL only filtered on JOBS."Due
+        # Back". Confirmed live (2026-08-31): "ТМ Основой 2025" (Р5562МСК)
+        # has Due Back = 2027-07-16 (still "open" by that field alone), but
+        # its actual CrewActivities max out at 2026-08-10 - every one of its
+        # 5460 activity rows is already in the past, zero today-or-future.
+        # HireTrack's own Due Back on a long-running job apparently isn't
+        # reliably closed out once real work stops, so it can't be trusted
+        # alone as "is there anything left to staff here".
+        if max(all_dates) < today:
             continue
         activity_start = min(all_dates)
         activity_end = max(all_dates)
