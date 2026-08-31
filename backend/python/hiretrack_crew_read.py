@@ -141,8 +141,19 @@ def read_crew_list(cursor):
     for j in jobs:
         header_ids = headers_by_job.get(j.JobNo, [])
         all_dates = [d for hid in header_ids for d in activity_dates_by_header.get(hid, [])]
-        activity_start = min(all_dates) if all_dates else j[4].date()
-        activity_end = max(all_dates) if all_dates else j[5].date()
+        # Skip jobs with no Crew_header at all, or headers with no
+        # CrewActivities - both checks are free (already-fetched bulk
+        # data), unlike checking for real CrewPositions (see this
+        # function's docstring). Confirmed live (2026-08-31): jobs like
+        # "Наследие - продажа" have NewCrewing=TRUE but zero Crew_header
+        # rows - they're not crew jobs at all, just sale/admin records that
+        # happen to match the base filter, and used to be silently dropped
+        # by the old code's "if not phases: continue" - this restores that
+        # without reintroducing the slow per-job query.
+        if not header_ids or not all_dates:
+            continue
+        activity_start = min(all_dates)
+        activity_end = max(all_dates)
         result_jobs.append(
             {
                 "id": (j[1] or "").strip(),
