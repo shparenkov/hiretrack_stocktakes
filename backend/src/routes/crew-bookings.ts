@@ -9,24 +9,29 @@ import {
   unassignCrewPosition,
 } from '../services/hiretrack-crew-write';
 
+// Sent back on every position write so the bridge can detect that HireTrack
+// (or another browser tab) already changed this position since the page
+// last loaded it - see check_not_stale() in hiretrack_crew_write.py.
+const staleCheckFields = {
+  expectedStatus: z.enum(['Unprocessed', 'Pencilled', 'Booked']).optional(),
+  expectedAssignee: z.string().nullable().optional(),
+};
+
 const assignSchema = z.object({
-  jobRef: z.string().min(1),
-  phaseTitle: z.string().min(1),
-  positionIndex: z.coerce.number().int().min(0),
+  positionId: z.coerce.number().int(),
   personName: z.string().min(1),
   offerStatus: z.enum(['pencilled', 'booked']),
+  ...staleCheckFields,
 });
 
 const unassignSchema = z.object({
-  jobRef: z.string().min(1),
-  phaseTitle: z.string().min(1),
-  positionIndex: z.coerce.number().int().min(0),
+  positionId: z.coerce.number().int(),
+  ...staleCheckFields,
 });
 
 const syncShiftsSchema = z.object({
-  jobRef: z.string().min(1),
-  phaseTitle: z.string().min(1),
-  positionIndex: z.coerce.number().int().min(0),
+  positionId: z.coerce.number().int(),
+  ...staleCheckFields,
 });
 
 const roleNoteSchema = z.object({
@@ -40,6 +45,20 @@ const shiftNoteSchema = z.object({
 });
 
 export const crewBookingsRouter = Router();
+
+// The write bridge raises a plain ValueError with a "CONFLICT: " prefix
+// when the optimistic-concurrency check fails - surfaced as 409 so the
+// frontend can show a distinct "data is stale, refresh" message instead of
+// a generic failure.
+function handleWriteError(res: Response, error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const conflictPrefix = 'CONFLICT: ';
+  if (message.startsWith(conflictPrefix)) {
+    res.status(409).json({ error: message.slice(conflictPrefix.length), conflict: true });
+    return;
+  }
+  res.status(502).json({ error: message });
+}
 
 crewBookingsRouter.get('/data', async (req: Request, res: Response) => {
   try {
@@ -61,7 +80,7 @@ crewBookingsRouter.post('/assign', async (req: Request, res: Response) => {
     const result = await assignCrewPosition(parsed.data);
     res.json(result);
   } catch (error) {
-    res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
+    handleWriteError(res, error);
   }
 });
 
@@ -75,7 +94,7 @@ crewBookingsRouter.post('/unassign', async (req: Request, res: Response) => {
     const result = await unassignCrewPosition(parsed.data);
     res.json(result);
   } catch (error) {
-    res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
+    handleWriteError(res, error);
   }
 });
 
@@ -89,7 +108,7 @@ crewBookingsRouter.post('/sync-shifts', async (req: Request, res: Response) => {
     const result = await syncCrewShifts(parsed.data);
     res.json(result);
   } catch (error) {
-    res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
+    handleWriteError(res, error);
   }
 });
 

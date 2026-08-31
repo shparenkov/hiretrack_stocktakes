@@ -246,6 +246,14 @@ def read_crew_data(cursor):
                     position_status = {0: "Unprocessed", 2: "Pencilled", 3: "Booked"}.get(p.Status, "Unprocessed")
                     positions_out.append(
                         {
+                            # Real CrewPositions.IDX - the write bridge
+                            # (assign/unassign/sync-shifts) addresses the row
+                            # directly by this, instead of re-deriving "the
+                            # Nth position" by index at write time (which
+                            # could silently target a different row if
+                            # positions were added/removed since the page
+                            # loaded).
+                            "positionId": p.IDX,
                             "role": role_text,
                             "position": role_text,
                             "description": (p.Description or "").strip(),

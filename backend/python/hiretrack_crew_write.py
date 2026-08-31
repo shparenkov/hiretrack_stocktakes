@@ -47,35 +47,47 @@ OFFER_STATUS_BOOKED = 7
 OFFER_STATUS_CANCELLED = 8
 
 
-def resolve_position(cursor, job_ref, phase_title, position_index):
-    cursor.execute("SELECT JobNo FROM JOBS WHERE Job_Ref = ?", job_ref)
-    job = cursor.fetchone()
-    if not job:
-        raise ValueError(f"No job with Job_Ref = {job_ref!r}")
+SHIFT_STATUS_LABELS = {0: "Unprocessed", 2: "Pencilled", 3: "Booked"}
 
-    cursor.execute("SELECT Idx FROM Crew_header WHERE XJob = ? AND Title = ?", job.JobNo, phase_title)
-    header = cursor.fetchone()
-    if not header:
-        raise ValueError(f"No Crew_header with Title = {phase_title!r} under job {job_ref!r}")
 
-    # Same ordering extract_real_data / hiretrack_crew_read use: Crew ordered
-    # by Idx, then CrewPositions ordered by IDX within each Crew row - the
-    # UI's "position index" is resolved back to a real CrewPositions.IDX
-    # using this exact order.
-    cursor.execute(
-        """
-        SELECT P.IDX, P.xPerson, CAST(P.Status AS SMALLINT) AS Status, C.Idx AS CrewIdx, C."Type" AS RoleType
-        FROM Crew C
-        INNER JOIN CrewPositions P ON P.xCrewRequest = C.Idx
-        WHERE C.Header = ?
-        ORDER BY C.Idx, P.IDX
-        """,
-        header.Idx,
-    )
-    positions = cursor.fetchall()
-    if position_index >= len(positions):
-        raise ValueError(f"position_index {position_index} out of range, phase only has {len(positions)} position(s)")
-    return positions[position_index].IDX
+def fetch_position_state(cursor, position_id):
+    # Current on-the-wire status/assignee for a position, used both to
+    # render results and to check for staleness before writing (see
+    # check_not_stale below).
+    cursor.execute("SELECT xPerson, CAST(Status AS SMALLINT) AS Status FROM CrewPositions WHERE IDX = ?", position_id)
+    row = cursor.fetchone()
+    if not row:
+        raise ValueError(f"No CrewPositions row with IDX = {position_id!r}")
+    status_label = SHIFT_STATUS_LABELS.get(row.Status, "Unprocessed")
+    assignee = None
+    if row.xPerson:
+        cursor.execute("SELECT SURNAME, FORENAME FROM Name2 WHERE NameCounter = ?", row.xPerson)
+        p = cursor.fetchone()
+        if p:
+            assignee = display_name(p.SURNAME, p.FORENAME)
+    return status_label, assignee
+
+
+def check_not_stale(cursor, position_id, expected_status, expected_assignee):
+    # Optimistic-concurrency guard: the browser sends back the status/
+    # assignee it last saw for this position. If HireTrack NX (or another
+    # browser tab) changed it since then, block the write instead of
+    # silently acting on stale assumptions - the frontend surfaces this as
+    # "data is stale, refresh" rather than a generic failure. Both fields
+    # are optional so older/other callers that don't send them skip the
+    # check entirely.
+    current_status, current_assignee = fetch_position_state(cursor, position_id)
+    if expected_status is not None and current_status != expected_status:
+        raise ValueError(
+            f"CONFLICT: Позиция уже изменилась в HireTrack (сейчас: {current_status}, "
+            f"на странице было: {expected_status}). Обновите страницу и повторите."
+        )
+    if expected_assignee is not None and (current_assignee or None) != (expected_assignee or None):
+        raise ValueError(
+            f"CONFLICT: Назначенный человек уже изменился в HireTrack (сейчас: {current_assignee or '—'}, "
+            f"на странице было: {expected_assignee or '—'}). Обновите страницу и повторите."
+        )
+    return current_status, current_assignee
 
 
 def display_name(surname, forename):
@@ -110,18 +122,18 @@ def resolve_person(cursor, person_name):
 
 
 def assign_position(cursor, params):
-    job_ref = params.get("jobRef")
-    phase_title = params.get("phaseTitle")
-    position_index = params.get("positionIndex")
+    position_id = params.get("positionId")
     person_name = params.get("personName")
     offer_status_name = params.get("offerStatus", "booked")
-    if not job_ref or not phase_title or position_index is None or not person_name:
-        raise ValueError("assign-position requires 'jobRef', 'phaseTitle', 'positionIndex' and 'personName'")
+    expected_status = params.get("expectedStatus")
+    expected_assignee = params.get("expectedAssignee")
+    if position_id is None or not person_name:
+        raise ValueError("assign-position requires 'positionId' and 'personName'")
     if offer_status_name not in ("pencilled", "booked"):
         raise ValueError("assign-position 'offerStatus' must be 'pencilled' or 'booked'")
-    position_index = int(position_index)
+    target_position = int(position_id)
 
-    target_position = resolve_position(cursor, job_ref, phase_title, position_index)
+    check_not_stale(cursor, target_position, expected_status, expected_assignee)
     person = resolve_person(cursor, person_name)
 
     if offer_status_name == "booked":
@@ -162,9 +174,6 @@ def assign_position(cursor, params):
     cursor.execute("UPDATE CrewShifts SET Status = ? WHERE xPosition = ?", shift_status, target_position)
 
     return {
-        "jobRef": job_ref,
-        "phaseTitle": phase_title,
-        "positionIndex": position_index,
         "positionId": target_position,
         "assignee": display_name(person.SURNAME, person.FORENAME),
         "offerStatus": offer_status_name,
@@ -172,14 +181,14 @@ def assign_position(cursor, params):
 
 
 def unassign_position(cursor, params):
-    job_ref = params.get("jobRef")
-    phase_title = params.get("phaseTitle")
-    position_index = params.get("positionIndex")
-    if not job_ref or not phase_title or position_index is None:
-        raise ValueError("unassign-position requires 'jobRef', 'phaseTitle' and 'positionIndex'")
-    position_index = int(position_index)
+    position_id = params.get("positionId")
+    expected_status = params.get("expectedStatus")
+    expected_assignee = params.get("expectedAssignee")
+    if position_id is None:
+        raise ValueError("unassign-position requires 'positionId'")
+    target_position = int(position_id)
 
-    target_position = resolve_position(cursor, job_ref, phase_title, position_index)
+    check_not_stale(cursor, target_position, expected_status, expected_assignee)
 
     cursor.execute(
         "UPDATE CrewPositionOffers SET OfferStatus = ? WHERE xPosition = ? AND (OfferStatus = ? OR OfferStatus = ?)",
@@ -196,12 +205,7 @@ def unassign_position(cursor, params):
     )
     cursor.execute("UPDATE CrewShifts SET Status = ? WHERE xPosition = ?", SHIFT_STATUS_UNPROCESSED, target_position)
 
-    return {
-        "jobRef": job_ref,
-        "phaseTitle": phase_title,
-        "positionIndex": position_index,
-        "positionId": target_position,
-    }
+    return {"positionId": target_position}
 
 
 def sync_shifts(cursor, params):
@@ -211,22 +215,17 @@ def sync_shifts(cursor, params):
     # existed at assignment time. This re-applies the position's current
     # Status to any of its shifts still stuck at 0, i.e. "allocate the
     # already-assigned person onto the newly added shifts too".
-    job_ref = params.get("jobRef")
-    phase_title = params.get("phaseTitle")
-    position_index = params.get("positionIndex")
-    if not job_ref or not phase_title or position_index is None:
-        raise ValueError("sync-shifts requires 'jobRef', 'phaseTitle' and 'positionIndex'")
-    position_index = int(position_index)
+    position_id = params.get("positionId")
+    expected_status = params.get("expectedStatus")
+    expected_assignee = params.get("expectedAssignee")
+    if position_id is None:
+        raise ValueError("sync-shifts requires 'positionId'")
+    target_position = int(position_id)
 
-    target_position = resolve_position(cursor, job_ref, phase_title, position_index)
-
-    cursor.execute("SELECT CAST(Status AS SMALLINT) AS Status FROM CrewPositions WHERE IDX = ?", target_position)
-    row = cursor.fetchone()
-    if not row:
-        raise ValueError(f"CrewPositions row not found for IDX {target_position}")
-    position_status = row.Status
-    if position_status not in (SHIFT_STATUS_PENCILLED, SHIFT_STATUS_BOOKED):
+    current_status, _ = check_not_stale(cursor, target_position, expected_status, expected_assignee)
+    if current_status not in ("Pencilled", "Booked"):
         raise ValueError("Position has no active Pencilled/Booked assignment to sync new shifts to")
+    position_status = SHIFT_STATUS_BOOKED if current_status == "Booked" else SHIFT_STATUS_PENCILLED
 
     cursor.execute(
         "UPDATE CrewShifts SET Status = ? WHERE xPosition = ? AND Status = ?",
@@ -236,9 +235,6 @@ def sync_shifts(cursor, params):
     )
 
     return {
-        "jobRef": job_ref,
-        "phaseTitle": phase_title,
-        "positionIndex": position_index,
         "positionId": target_position,
         "status": "booked" if position_status == SHIFT_STATUS_BOOKED else "pencilled",
     }

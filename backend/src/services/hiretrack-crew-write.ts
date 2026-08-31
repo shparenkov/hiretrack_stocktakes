@@ -13,26 +13,26 @@ interface BridgeResponse<T> {
   error?: string;
 }
 
+// What the browser last saw for this position - sent back on every write so
+// the bridge can reject the write if HireTrack (or another tab) already
+// changed it, instead of silently acting on stale assumptions. Optional:
+// omitting them skips the check.
+interface StaleCheckParams {
+  expectedStatus?: 'Unprocessed' | 'Pencilled' | 'Booked';
+  expectedAssignee?: string | null;
+}
+
 export interface AssignPositionResult {
-  jobRef: string;
-  phaseTitle: string;
-  positionIndex: number;
   positionId: number;
   assignee: string;
   offerStatus: 'pencilled' | 'booked';
 }
 
 export interface UnassignPositionResult {
-  jobRef: string;
-  phaseTitle: string;
-  positionIndex: number;
   positionId: number;
 }
 
 export interface SyncShiftsResult {
-  jobRef: string;
-  phaseTitle: string;
-  positionIndex: number;
   positionId: number;
   status: 'pencilled' | 'booked';
 }
@@ -116,29 +116,25 @@ export function runCrewOdbcWrite<T>(request: Record<string, unknown>): Promise<T
   });
 }
 
-export async function assignCrewPosition(params: {
-  jobRef: string;
-  phaseTitle: string;
-  positionIndex: number;
-  personName: string;
-  offerStatus: 'pencilled' | 'booked';
-}): Promise<AssignPositionResult> {
+export async function assignCrewPosition(
+  params: {
+    positionId: number;
+    personName: string;
+    offerStatus: 'pencilled' | 'booked';
+  } & StaleCheckParams
+): Promise<AssignPositionResult> {
   return runCrewOdbcWrite<AssignPositionResult>({ operation: 'assign-position', ...params });
 }
 
-export async function unassignCrewPosition(params: {
-  jobRef: string;
-  phaseTitle: string;
-  positionIndex: number;
-}): Promise<UnassignPositionResult> {
+export async function unassignCrewPosition(
+  params: { positionId: number } & StaleCheckParams
+): Promise<UnassignPositionResult> {
   return runCrewOdbcWrite<UnassignPositionResult>({ operation: 'unassign-position', ...params });
 }
 
-export async function syncCrewShifts(params: {
-  jobRef: string;
-  phaseTitle: string;
-  positionIndex: number;
-}): Promise<SyncShiftsResult> {
+export async function syncCrewShifts(
+  params: { positionId: number } & StaleCheckParams
+): Promise<SyncShiftsResult> {
   return runCrewOdbcWrite<SyncShiftsResult>({ operation: 'sync-shifts', ...params });
 }
 

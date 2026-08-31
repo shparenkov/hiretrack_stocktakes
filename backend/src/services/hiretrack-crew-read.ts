@@ -12,6 +12,10 @@ interface BridgeResponse<T> {
 }
 
 export interface CrewBookingsPosition {
+  // Real CrewPositions.IDX - the stable key writes (assign/unassign/
+  // sync-shifts) now address directly, instead of re-deriving "the Nth
+  // position" by index at write time.
+  positionId: number;
   role: string;
   position: string;
   description: string;
@@ -53,6 +57,11 @@ export interface CrewBookingsJob {
 export interface CrewBookingsData {
   jobs: CrewBookingsJob[];
   crewRoster: string[];
+  // When this snapshot was actually pulled from HireTrack (not when this
+  // particular HTTP response was served - a request can be served straight
+  // from the cache below) - lets the frontend show a real "data as of..."
+  // freshness indicator instead of just "when did my browser last ask".
+  fetchedAt: string;
 }
 
 function resolveBridgePath() {
@@ -131,8 +140,9 @@ let pendingRead: Promise<CrewBookingsData> | null = null;
 
 function refreshCrewData(): Promise<CrewBookingsData> {
   if (!pendingRead) {
-    pendingRead = runCrewOdbcRead<CrewBookingsData>({ operation: 'crew-data' })
-      .then((data) => {
+    pendingRead = runCrewOdbcRead<Omit<CrewBookingsData, 'fetchedAt'>>({ operation: 'crew-data' })
+      .then((raw) => {
+        const data: CrewBookingsData = { ...raw, fetchedAt: new Date().toISOString() };
         dataCache = { expiresAt: Date.now() + cacheMs, data };
         return data;
       })

@@ -490,6 +490,28 @@ document.getElementById("gantt").addEventListener("click", (ev) => {
   }
 });
 
+// Highlights the "Обновить" button briefly - used when a write is rejected
+// as stale, to point at the fix (refresh) rather than just naming the
+// problem.
+function flashRefreshButton() {
+  const btn = document.getElementById("refresh-data");
+  btn.classList.add("flash");
+  setTimeout(() => btn.classList.remove("flash"), 2500);
+}
+
+// A 409 means the write bridge's optimistic-concurrency check rejected the
+// request - the position changed in HireTrack (or another tab) since this
+// page last loaded it. Surfaced distinctly from a generic failure so the
+// fix ("Обновить") is obvious instead of looking like a random error.
+async function throwForResponse(resp) {
+  const body = await resp.json().catch(() => ({}));
+  if (resp.status === 409 || body.conflict) {
+    flashRefreshButton();
+    throw new Error(body.error || "Данные на странице устарели. Нажмите «Обновить».");
+  }
+  throw new Error(body.error || `HTTP ${resp.status}`);
+}
+
 // Picking a name only fills the field — nothing is considered assigned until
 // one of the confirm buttons (or Enter, which books) is clicked. Confirming
 // POSTs to /api/crew-bookings/assign and only applies the change in the UI
@@ -518,15 +540,15 @@ async function confirmAssignee(jobId, phaseIdx, posIdx, value, offerStatus) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        jobRef: jobId,
-        phaseTitle: phase.name,
-        positionIndex: Number(posIdx),
+        positionId: position.positionId,
         personName,
         offerStatus,
+        expectedStatus: position.status,
+        expectedAssignee: position.assignee,
       }),
     });
+    if (!resp.ok) await throwForResponse(resp);
     const body = await resp.json();
-    if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
     position.assignee = body.assignee || personName;
     position.status = offerStatus === "booked" ? "Booked" : "Pencilled";
     state.pendingInput.delete(key);
@@ -553,13 +575,12 @@ async function removeAssignee(jobId, phaseIdx, posIdx) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        jobRef: jobId,
-        phaseTitle: phase.name,
-        positionIndex: Number(posIdx),
+        positionId: position.positionId,
+        expectedStatus: position.status,
+        expectedAssignee: position.assignee,
       }),
     });
-    const body = await resp.json();
-    if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
+    if (!resp.ok) await throwForResponse(resp);
     position.assignee = null;
     position.status = "Unprocessed";
     state.pendingInput.delete(key);
@@ -590,13 +611,13 @@ async function syncShifts(jobId, phaseIdx, posIdx) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        jobRef: jobId,
-        phaseTitle: phase.name,
-        positionIndex: Number(posIdx),
+        positionId: position.positionId,
+        expectedStatus: position.status,
+        expectedAssignee: position.assignee,
       }),
     });
+    if (!resp.ok) await throwForResponse(resp);
     const body = await resp.json();
-    if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
     const syncedStatus = body.status === "booked" ? 3 : 2;
     if (position.shiftStatuses) {
       position.shiftStatuses = position.shiftStatuses.map((st, i) =>
@@ -802,6 +823,34 @@ function openShiftNoteEditor(cell) {
   });
 }
 
+// When the data currently on screen was actually pulled from HireTrack -
+// from the server's own fetchedAt (when the backend cache was populated),
+// NOT "when did my browser get an HTTP response" (a request can be served
+// straight from that ~30s cache). Lets someone judge "is this fresh enough
+// to trust" - e.g. after being told "I just changed shifts in HT, go ahead
+// and assign" - without needing to guess.
+let lastFetchedAt = null;
+
+const FRESHNESS_STALE_MS = 2 * 60 * 1000; // 2 min - amber
+const FRESHNESS_VERY_STALE_MS = 10 * 60 * 1000; // 10 min - red
+
+function updateFreshnessLabel() {
+  const el = document.getElementById("data-freshness");
+  if (!el) return;
+  if (!lastFetchedAt) {
+    el.textContent = "";
+    el.className = "freshness";
+    return;
+  }
+  const ageMs = Date.now() - lastFetchedAt.getTime();
+  const ageMin = Math.floor(ageMs / 60000);
+  const ageSec = Math.floor(ageMs / 1000);
+  const label = ageSec < 60 ? "только что" : ageMin < 60 ? `${ageMin} мин назад` : lastFetchedAt.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+  el.textContent = `Данные из HireTrack: ${label}`;
+  el.className = "freshness" + (ageMs >= FRESHNESS_VERY_STALE_MS ? " very-stale" : ageMs >= FRESHNESS_STALE_MS ? " stale" : "");
+}
+setInterval(updateFreshnessLabel, 15000);
+
 async function loadCrewData(options) {
   const forceRefresh = options && options.forceRefresh;
   const url = forceRefresh ? "/api/crew-bookings/data?refresh=1" : "/api/crew-bookings/data";
@@ -813,6 +862,8 @@ async function loadCrewData(options) {
   const data = await resp.json();
   JOBS = data.jobs.map((j) => ({ ...j, crewBoss: j.crewBoss || "Unassigned" }));
   CREW = data.crewRoster;
+  lastFetchedAt = data.fetchedAt ? new Date(data.fetchedAt) : new Date();
+  updateFreshnessLabel();
 }
 
 document.getElementById("refresh-data").addEventListener("click", async () => {

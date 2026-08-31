@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <title>Crew Bookings — HireTrack NX</title>
-  <link rel="stylesheet" href="styles.css?v=8" />
+  <link rel="stylesheet" href="styles.css?v=9" />
 </head>
 <body>
   <div class="toolbar">
@@ -12,6 +12,7 @@
     <button id="expand-all">Развернуть всё</button>
     <button id="collapse-all">Свернуть всё</button>
     <button id="refresh-data" title="Перечитать данные из HireTrack">Обновить</button>
+    <span id="data-freshness" class="freshness" title="Когда эти данные были получены из HireTrack"></span>
   </div>
   <div class="toolbar toolbar-window">
     <label class="window-field">Начальная дата
@@ -67,6 +68,6 @@
   <div class="gantt-scroll">
     <div id="gantt"></div>
   </div>
-  <script src="app.js?v=9"></script>
+  <script src="app.js?v=10"></script>
 </body>
 </html>

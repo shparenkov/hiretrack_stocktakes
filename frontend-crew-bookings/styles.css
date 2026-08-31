@@ -44,6 +44,16 @@ body { height: 100vh; display: flex; flex-direction: column; }
 }
 .toolbar button:hover { background: var(--bg-alt); }
 
+.freshness { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.freshness.stale { color: var(--amber); font-weight: 600; }
+.freshness.very-stale { color: var(--red); font-weight: 700; }
+
+@keyframes refresh-flash {
+  0%, 100% { background: #fff; border-color: var(--border); }
+  50% { background: var(--red-light); border-color: var(--red); color: var(--red); }
+}
+#refresh-data.flash { animation: refresh-flash 0.6s ease-in-out 3; }
+
 .toolbar-window { border-top: 1px solid var(--border); gap: 10px; flex-wrap: wrap; align-items: flex-end; }
 .window-field { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--muted); }
 .window-field-row { display: flex; align-items: center; gap: 6px; }
