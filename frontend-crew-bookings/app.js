@@ -119,6 +119,24 @@ function barStyle(s, e) {
   return `left:${left}px; width:${width}px;`;
 }
 
+// Does this job's own activity span intersect the currently visible date
+// window at all? Moving/resizing the window only ever changed which day
+// COLUMNS render - a job whose whole span falls entirely outside it still
+// showed up as a row with a blank bar-track, which reads as "nothing here"
+// or "already finished" rather than "just not in view right now". Jobs
+// that partially overlap still render fine (bar + «/» truncation markers
+// in renderJobRow) and stay visible here - only a zero-overlap job is
+// filtered out.
+function jobOverlapsWindow(job) {
+  const barStart = job.activityStart || job.start;
+  const barEnd = job.activityEnd || job.end;
+  const s = colFor(barStart);
+  const e = colFor(barEnd) + 1;
+  const sClamped = Math.max(s, 1);
+  const eClamped = Math.min(e, DAY_COUNT + 1);
+  return sClamped < eClamped;
+}
+
 // Total shift count for this job on a given calendar day, summed across ALL
 // phases/positions - lets the collapsed job row's purple bar show shift
 // density per day without expanding into Phase -> Position rows to see it
@@ -410,6 +428,7 @@ function render() {
   let visibleJobs = JOBS.filter((j) =>
     state.statusAndAbove ? (j.statusRank ?? 0) >= state.statusFilter : (j.statusRank ?? 0) === state.statusFilter
   );
+  visibleJobs = visibleJobs.filter(jobOverlapsWindow);
   const query = state.searchQuery.trim().toLowerCase();
   if (query) {
     visibleJobs = visibleJobs.filter(
