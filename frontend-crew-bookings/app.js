@@ -372,12 +372,32 @@ function affinityDotHtml(affinity, label) {
   return `<span class="affinity-dot ${cls}" title="${label}: ${value}"></span>`;
 }
 
+// Known short forms for common attributes/certifications - a generic
+// slice(0,3) truncation produced unreadable badges ("Охр", "Пож", "Эле").
+// Falls back to word-initials for anything not in the map (e.g. a future
+// multi-word attribute), and first-2-letters for an unmapped single word.
+const ATTRIBUTE_ABBREVIATIONS = {
+  "Охрана труда": "ОТ",
+  "Пожарная безопасность": "ПБ",
+  "Электробезопасность": "ЭБ",
+};
+
+function attributeAbbreviation(description) {
+  const text = (description || "").trim();
+  if (ATTRIBUTE_ABBREVIATIONS[text]) return ATTRIBUTE_ABBREVIATIONS[text];
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length > 1) {
+    return words.map((w) => w[0]).join("").toUpperCase().slice(0, 3);
+  }
+  return text.slice(0, 2).toUpperCase();
+}
+
 function renderCandidateRow(c) {
   const badges = c.attributes
     .slice(0, 4)
     .map(
       (a) =>
-        `<span class="attr-badge${a.expired ? " expired" : ""}" title="${a.description}${a.expiryDate ? " — до " + a.expiryDate : ""}${a.expired ? " (просрочен)" : ""}">${(a.description || "").slice(0, 3)}</span>`
+        `<span class="attr-badge${a.expired ? " expired" : ""}" title="${a.description}${a.expiryDate ? " — до " + a.expiryDate : ""}${a.expired ? " (просрочен)" : ""}">${attributeAbbreviation(a.description)}</span>`
     )
     .join("");
   return `<div class="assignee-dropdown-item candidate-item" data-name="${c.name}">
