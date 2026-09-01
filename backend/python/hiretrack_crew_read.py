@@ -208,14 +208,15 @@ def read_job_detail(cursor, job_ref):
     headers = cursor.fetchall()
     header_ids = [h.Idx for h in headers]
 
+    # Filters on Crew.Job_no rather than Header IN (...) - confirmed via
+    # strings analysis of the HireTrack NX client binary (2026-09-01) that
+    # Crew.Job_no has a real index ("jobidx" in db.sql) and is exactly what
+    # the vendor's own client filters on for this same join; Header has no
+    # such index.
     crew_by_header = {}
-    if header_ids:
-        cursor.execute(
-            f'SELECT Idx, Header, "Type", "Notes" FROM Crew WHERE Header IN ({",".join("?" * len(header_ids))}) ORDER BY Idx',
-            header_ids,
-        )
-        for c in cursor.fetchall():
-            crew_by_header.setdefault(c.Header, []).append(c)
+    cursor.execute('SELECT Idx, Header, "Type", "Notes" FROM Crew WHERE Job_no = ? ORDER BY Idx', job.JobNo)
+    for c in cursor.fetchall():
+        crew_by_header.setdefault(c.Header, []).append(c)
 
     all_crew_ids = [c.Idx for cs in crew_by_header.values() for c in cs]
     all_type_ids = list({c.Type for cs in crew_by_header.values() for c in cs if c.Type is not None})

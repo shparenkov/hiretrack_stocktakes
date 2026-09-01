@@ -274,6 +274,10 @@ button.toggle-btn:hover { background: var(--bg-alt); }
 .assignee-error {
   font-size: 10px; line-height: 1.2; color: #932b20; white-space: normal;
 }
+.assignee-warning {
+  font-size: 10px; line-height: 1.2; color: #7a5c00; background: var(--amber-light);
+  padding: 2px 4px; white-space: normal; margin-top: 2px;
+}
 .assignee-input {
   flex: 1 1 auto; width: 0; min-width: 0; height: 22px;
   border: 1px solid #c0392b;

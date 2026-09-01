@@ -70,6 +70,10 @@ const state = {
   searchQuery: "",
   groupBy: "none",
   assignErrors: new Map(), // key: `${jobId}::${phaseIdx}::${posIdx}` -> message
+  // Non-blocking "this person is already booked elsewhere" heads-up from
+  // the write bridge (mirrors HireTrack NX's own schedule-conflict check) -
+  // key: `${jobId}::${phaseIdx}::${posIdx}` -> array of conflict objects.
+  assignWarnings: new Map(),
   assignPending: new Set(), // key: `${jobId}::${phaseIdx}::${posIdx}`
   // Text typed but not yet confirmed, per position. Without this, confirming
   // one row triggers a full re-render (to show its own pending/success
@@ -289,6 +293,17 @@ function shiftStateClass(shiftStatus) {
   return "";
 }
 
+// Non-blocking heads-up (mirrors HireTrack NX's own schedule-conflict
+// check, see hiretrack_crew_write.py's find_person_conflicts) that this
+// person already has an active Pencilled/Booked commitment elsewhere on
+// one of the same dates. The write already succeeded - this is purely
+// informational, same as HireTrack's own UI.
+function formatConflicts(assignee, conflicts) {
+  const shown = conflicts.slice(0, 3).map((c) => `${c.date}: ${c.jobRef} (${c.role})`);
+  const extra = conflicts.length > 3 ? ` и ещё ${conflicts.length - 3}` : "";
+  return `⚠ ${assignee || "Человек"} уже занят(а): ${shown.join("; ")}${extra}`;
+}
+
 function renderPositionRow(job, phase, position, phaseIdx, posIdx) {
   const s = colFor(phase.start);
   const isBooked = position.status === "Booked";
@@ -329,6 +344,8 @@ function renderPositionRow(job, phase, position, phaseIdx, posIdx) {
   const key = `${job.id}::${phaseIdx}::${posIdx}`;
   const pending = state.assignPending.has(key);
   const error = state.assignErrors.get(key);
+  const conflicts = state.assignWarnings.get(key);
+  const warning = conflicts && conflicts.length ? formatConflicts(position.assignee, conflicts) : null;
   const placeholder = isBooked ? "Забукано" : isPencilled ? "В резерве" : "Unprocessed — назначить...";
   const hasRoleNote = !!(position.roleNotes && position.roleNotes.trim());
   return `<div class="row position ${stateClass}">
@@ -396,6 +413,7 @@ function renderPositionRow(job, phase, position, phaseIdx, posIdx) {
         }
       </div>
       ${error ? `<div class="assignee-error">${error}</div>` : ""}
+      ${warning ? `<div class="assignee-warning">${warning}</div>` : ""}
     </div>
     <div class="cell col-crew position-description">${position.description || ""}</div>
     <div class="day-cells">${dayCells.join("")}</div>
@@ -605,6 +623,7 @@ async function confirmAssignee(jobId, phaseIdx, posIdx, value, offerStatus) {
 
   state.assignPending.add(key);
   state.assignErrors.delete(key);
+  state.assignWarnings.delete(key);
   render();
 
   try {
@@ -624,6 +643,9 @@ async function confirmAssignee(jobId, phaseIdx, posIdx, value, offerStatus) {
     position.assignee = body.assignee || personName;
     position.status = offerStatus === "booked" ? "Booked" : "Pencilled";
     state.pendingInput.delete(key);
+    if (body.conflicts && body.conflicts.length) {
+      state.assignWarnings.set(key, body.conflicts);
+    }
   } catch (e) {
     state.assignErrors.set(key, "Не удалось назначить: " + e.message);
   } finally {
@@ -640,6 +662,7 @@ async function removeAssignee(jobId, phaseIdx, posIdx) {
 
   state.assignPending.add(key);
   state.assignErrors.delete(key);
+  state.assignWarnings.delete(key);
   render();
 
   try {
@@ -676,6 +699,7 @@ async function syncShifts(jobId, phaseIdx, posIdx) {
 
   state.assignPending.add(key);
   state.assignErrors.delete(key);
+  state.assignWarnings.delete(key);
   render();
 
   try {
@@ -695,6 +719,9 @@ async function syncShifts(jobId, phaseIdx, posIdx) {
       position.shiftStatuses = position.shiftStatuses.map((st, i) =>
         position.qtyPerDay[i] && st === 0 ? syncedStatus : st
       );
+    }
+    if (body.conflicts && body.conflicts.length) {
+      state.assignWarnings.set(key, body.conflicts);
     }
   } catch (e) {
     state.assignErrors.set(key, "Не удалось аллоцировать смены: " + e.message);

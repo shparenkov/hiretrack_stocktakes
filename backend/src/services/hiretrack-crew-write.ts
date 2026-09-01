@@ -22,10 +22,23 @@ interface StaleCheckParams {
   expectedAssignee?: string | null;
 }
 
+// Non-blocking heads-up that the assigned person already has an active
+// Pencilled/Booked commitment elsewhere on one of these same dates -
+// mirrors HireTrack NX's own "UnavailableForDate" schedule check (found via
+// strings analysis of the client binary, 2026-09-01). Informational only,
+// same as HireTrack's own UI - the write already went through.
+export interface PersonConflict {
+  date: string;
+  jobRef: string;
+  jobTitle: string;
+  role: string;
+}
+
 export interface AssignPositionResult {
   positionId: number;
   assignee: string;
   offerStatus: 'pencilled' | 'booked';
+  conflicts: PersonConflict[];
 }
 
 export interface UnassignPositionResult {
@@ -35,6 +48,7 @@ export interface UnassignPositionResult {
 export interface SyncShiftsResult {
   positionId: number;
   status: 'pencilled' | 'booked';
+  conflicts: PersonConflict[];
 }
 
 export interface SetRoleNoteResult {

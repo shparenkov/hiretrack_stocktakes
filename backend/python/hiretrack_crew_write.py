@@ -90,6 +90,61 @@ def check_not_stale(cursor, position_id, expected_status, expected_assignee):
     return current_status, current_assignee
 
 
+def get_position_shift_dates(cursor, position_id):
+    cursor.execute(
+        """
+        SELECT DISTINCT A.ActivityDate
+        FROM CrewShifts S
+        INNER JOIN CrewActivities A ON S.xActivity = A.Idx
+        WHERE S.xPosition = ? AND CAST(S.BookingState AS SMALLINT) <> 2
+        """,
+        position_id,
+    )
+    return [r.ActivityDate for r in cursor.fetchall()]
+
+
+def find_person_conflicts(cursor, person_name_counter, exclude_position_id, dates):
+    # Mirrors a query pattern found in HireTrack NX's own client binary
+    # (strings analysis, 2026-09-01: its internal "#Schedule" availability
+    # check joins CrewActivities -> CrewShifts -> CrewPositions ->
+    # CrewPositionOffers -> Crew -> Jobs, filtered to a person's currently
+    # active offers, flagging same-date bookings elsewhere as
+    # "UnavailableForDate"). Deliberately non-blocking here too, same as
+    # HireTrack's own UI - a double-booking might be intentional (travel
+    # time between two nearby same-day jobs, etc.), so this surfaces a
+    # warning for a human to judge, it doesn't refuse the write.
+    if not dates:
+        return []
+    placeholders = ",".join("?" * len(dates))
+    cursor.execute(
+        f"""
+        SELECT DISTINCT A.ActivityDate, J.Job_Ref, J.Job_Title, T.CrewText AS Role
+        FROM CrewPositionOffers O
+        INNER JOIN CrewShifts S ON O.xPosition = S.xPosition
+        INNER JOIN CrewActivities A ON S.xActivity = A.Idx
+        INNER JOIN CrewPositions P ON O.xPosition = P.Idx
+        INNER JOIN Crew C ON P.xCrewRequest = C.Idx
+        INNER JOIN JOBS J ON C.Job_no = J.JobNo
+        INNER JOIN CREWTYPE T ON C."Type" = T.Crewindex
+        WHERE O.xPerson = ? AND O.OfferStatus IN (6, 7) AND O.xPosition <> ?
+          AND A.ActivityDate IN ({placeholders})
+        ORDER BY A.ActivityDate
+        """,
+        person_name_counter,
+        exclude_position_id,
+        *dates,
+    )
+    return [
+        {
+            "date": r.ActivityDate.isoformat(),
+            "jobRef": (r.Job_Ref or "").strip(),
+            "jobTitle": (r.Job_Title or "").strip(),
+            "role": (r.Role or "").strip(),
+        }
+        for r in cursor.fetchall()
+    ]
+
+
 def display_name(surname, forename):
     # Фамилия Имя (surname first) - matches hiretrack_crew_read.py's own
     # display_name(), since the frontend sends back exactly what the roster
@@ -173,10 +228,14 @@ def assign_position(cursor, params):
     )
     cursor.execute("UPDATE CrewShifts SET Status = ? WHERE xPosition = ?", shift_status, target_position)
 
+    shift_dates = get_position_shift_dates(cursor, target_position)
+    conflicts = find_person_conflicts(cursor, person.NameCounter, target_position, shift_dates)
+
     return {
         "positionId": target_position,
         "assignee": display_name(person.SURNAME, person.FORENAME),
         "offerStatus": offer_status_name,
+        "conflicts": conflicts,
     }
 
 
@@ -227,6 +286,22 @@ def sync_shifts(cursor, params):
         raise ValueError("Position has no active Pencilled/Booked assignment to sync new shifts to")
     position_status = SHIFT_STATUS_BOOKED if current_status == "Booked" else SHIFT_STATUS_PENCILLED
 
+    # The straggler shifts (still Status=0) are exactly the newly-added
+    # dates about to be allocated to whoever's already on this position -
+    # worth an availability check same as a fresh assignment, since these
+    # are new commitments for that person too.
+    cursor.execute(
+        "SELECT DISTINCT A.ActivityDate FROM CrewShifts S INNER JOIN CrewActivities A ON S.xActivity = A.Idx "
+        "WHERE S.xPosition = ? AND S.Status = ?",
+        target_position,
+        SHIFT_STATUS_UNPROCESSED,
+    )
+    new_dates = [r.ActivityDate for r in cursor.fetchall()]
+
+    cursor.execute("SELECT xPerson FROM CrewPositions WHERE IDX = ?", target_position)
+    row = cursor.fetchone()
+    person_id = row.xPerson if row else None
+
     cursor.execute(
         "UPDATE CrewShifts SET Status = ? WHERE xPosition = ? AND Status = ?",
         position_status,
@@ -234,9 +309,12 @@ def sync_shifts(cursor, params):
         SHIFT_STATUS_UNPROCESSED,
     )
 
+    conflicts = find_person_conflicts(cursor, person_id, target_position, new_dates) if person_id else []
+
     return {
         "positionId": target_position,
         "status": "booked" if position_status == SHIFT_STATUS_BOOKED else "pencilled",
+        "conflicts": conflicts,
     }
 
 
