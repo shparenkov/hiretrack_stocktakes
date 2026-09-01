@@ -342,6 +342,23 @@ button.toggle-btn:hover { background: var(--bg-alt); }
 .assignee-dropdown-item:hover { background: var(--purple-light); }
 .assignee-dropdown-empty { padding: 5px 8px; color: var(--muted); font-style: italic; }
 
+/* Optional affinity/skills mode (state.affinityMode) - see AFFINITY_MODE_KEY
+   in app.js. Off by default, a separate layer on top of the plain picker. */
+.candidate-item { display: flex; align-items: center; gap: 5px; }
+.candidate-item .cand-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cand-rating { flex: 0 0 auto; font-size: 11px; color: var(--amber); font-weight: 700; white-space: nowrap; }
+.affinity-dot {
+  flex: 0 0 auto; display: inline-block; width: 8px; height: 8px;
+  border: 1px solid #7a828c; background: #d9dde2;
+}
+.affinity-dot.positive { background: var(--green); border-color: #1f7a30; }
+.affinity-dot.negative { background: var(--red); border-color: #8f2419; }
+.attr-badge {
+  flex: 0 0 auto; font-size: 9px; font-weight: 700; text-transform: uppercase;
+  padding: 1px 3px; background: var(--purple-light); color: var(--purple); border: 1px solid var(--purple);
+}
+.attr-badge.expired { background: var(--red-light); color: var(--red); border-color: var(--red); }
+
 .notes-popover {
   position: fixed;
   z-index: 1000;

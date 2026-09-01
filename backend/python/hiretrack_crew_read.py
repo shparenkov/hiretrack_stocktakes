@@ -35,7 +35,7 @@ def _candidate_jobs(cursor):
     cursor.execute(
         """
         SELECT JobNo, Job_Ref, Job_Title, Status, "Due Out", "Due Back", xCrewManager,
-               Client, "Type", Venue
+               Client, "Type", Venue, "Handler"
         FROM JOBS
         WHERE NewCrewing = TRUE
           AND Status IN (1, 2, 3, 4, 6)
@@ -180,6 +180,16 @@ def read_crew_list(cursor):
                 "client": clients.get(j[7]) or "—",
                 "jobType": job_types.get(j[8]) or "—",
                 "venue": venues.get(j[9]) or "—",
+                # Raw ids for the optional affinity feature (see
+                # read_crew_candidates) - crewBossId is Name2.NameCounter
+                # (same person as the crewBoss display name above),
+                # handlerId is Users.UID (JOBS."Handler" - a HireTrack
+                # internal staff account, unrelated to Name2/crew people;
+                # confirmed live it's populated on ~99.5% of jobs, while
+                # xCrewManager/crewBoss is frequently NULL in this
+                # installation's data).
+                "crewBossId": j[6],
+                "handlerId": j[10],
                 # Populated on demand by read_job_detail() when this job's
                 # row is expanded in the UI - see this function's docstring.
                 "phases": [],
@@ -315,6 +325,10 @@ def read_job_detail(cursor, job_ref):
                     {
                         "positionId": p.IDX,
                         "role": role_text,
+                        # Raw CrewType id for the optional affinity feature
+                        # (see read_crew_candidates) - role/position above
+                        # are only the resolved display text.
+                        "crewTypeId": c.Type,
                         "position": role_text,
                         "description": (p.Description or "").strip(),
                         "status": position_status,
@@ -340,6 +354,95 @@ def read_job_detail(cursor, job_ref):
     return {"jobRef": job_ref, "phases": phases}
 
 
+def read_crew_candidates(cursor, crew_type_id, handler_id, crew_boss_id):
+    # Optional affinity/skills enrichment for the assignee picker - off by
+    # default in the UI (a toggle), fetched separately from the main list/
+    # detail flow above since it's a distinct concern (see the "Surface
+    # crew affinity..." plan, 2026-09-01). Mirrors a query pattern found via
+    # strings analysis of the HireTrack NX client binary itself
+    # (nx_client_strings/sql_context_blocks.txt:10539-10557): CrewPeopleLkp
+    # for a per-role rating, CrewPeopleAttributes/CrewAttributes for
+    # skills/certifications, CrewAffinities (two independent LinkType
+    # dimensions - 0=Handler tied to Users.UID, 1=CrewBoss tied to
+    # Name2.NameCounter) for compatibility scores. Deliberately never joins
+    # all of this in one big query - separate small bulk lookups scoped to
+    # the ~100-person active roster, merged in Python, matching this
+    # bridge's existing style and avoiding any risk of the NexusDB
+    # parameterized-string-equality-plus-OR/IS-NULL quirk documented
+    # elsewhere in this file's write-side sibling.
+    cursor.execute(
+        "SELECT NameCounter, SURNAME, FORENAME FROM Name2 WHERE CREW = TRUE AND (Archived IS NULL OR Archived = FALSE)"
+    )
+    people = [p for p in cursor.fetchall() if (p.SURNAME or "").strip() or (p.FORENAME or "").strip()]
+    person_ids = [p.NameCounter for p in people]
+
+    ratings = {}
+    if crew_type_id is not None and person_ids:
+        placeholders = ",".join("?" * len(person_ids))
+        cursor.execute(
+            f"SELECT xPerson, MyRating FROM CrewPeopleLkp WHERE xCrewType = ? AND xPerson IN ({placeholders})",
+            crew_type_id,
+            *person_ids,
+        )
+        ratings = {r.xPerson: r.MyRating for r in cursor.fetchall()}
+
+    today = date.today()
+    attributes_by_person = {}
+    if person_ids:
+        placeholders = ",".join("?" * len(person_ids))
+        cursor.execute(
+            f"""
+            SELECT PA.xPerson, PA.ExpiryDate, PA.Valid, A.Description
+            FROM CrewPeopleAttributes PA
+            INNER JOIN CrewAttributes A ON PA.xCrewAttribute = A.IDX
+            WHERE PA.xPerson IN ({placeholders})
+            """,
+            *person_ids,
+        )
+        for row in cursor.fetchall():
+            if not row.Valid:
+                continue
+            attributes_by_person.setdefault(row.xPerson, []).append(
+                {
+                    "description": (row.Description or "").strip(),
+                    "expiryDate": row.ExpiryDate.isoformat() if row.ExpiryDate else None,
+                    "expired": bool(row.ExpiryDate and row.ExpiryDate < today),
+                }
+            )
+
+    def fetch_affinity(link_type, link_id):
+        if link_id is None or not person_ids:
+            return {}
+        placeholders = ",".join("?" * len(person_ids))
+        cursor.execute(
+            f"""
+            SELECT xPerson, CAST(Score AS SMALLINT) AS Score, ScoreIsNegative
+            FROM CrewAffinities
+            WHERE LinkType = ? AND xLink = ? AND xPerson IN ({placeholders})
+            """,
+            link_type,
+            link_id,
+            *person_ids,
+        )
+        return {r.xPerson: {"score": r.Score, "isNegative": bool(r.ScoreIsNegative)} for r in cursor.fetchall()}
+
+    handler_affinity = fetch_affinity(0, handler_id)  # TAffinityLinkType.altHandler
+    crew_boss_affinity = fetch_affinity(1, crew_boss_id)  # TAffinityLinkType.altCrewBoss
+
+    candidates = []
+    for p in people:
+        candidates.append(
+            {
+                "name": display_name(p.SURNAME, p.FORENAME),
+                "rating": ratings.get(p.NameCounter, 0),
+                "attributes": attributes_by_person.get(p.NameCounter, []),
+                "handlerAffinity": handler_affinity.get(p.NameCounter),
+                "crewBossAffinity": crew_boss_affinity.get(p.NameCounter),
+            }
+        )
+    return {"candidates": candidates}
+
+
 def main():
     request = json.load(sys.stdin)
     operation = request.get("operation")
@@ -357,6 +460,10 @@ def main():
             result = read_crew_list(cursor)
         elif operation == "crew-job-detail":
             result = read_job_detail(cursor, request.get("jobRef"))
+        elif operation == "crew-candidates":
+            result = read_crew_candidates(
+                cursor, request.get("crewTypeId"), request.get("handlerId"), request.get("crewBossId")
+            )
         else:
             raise ValueError(f"Unsupported crew read operation: {operation}")
         json.dump({"ok": True, "result": result}, sys.stdout, ensure_ascii=False)

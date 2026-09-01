@@ -17,6 +17,9 @@ export interface CrewBookingsPosition {
   // position" by index at write time.
   positionId: number;
   role: string;
+  // Raw CrewType id - only used to fetch affinity/skills candidate data
+  // (see CrewCandidate below); role/position above are the display text.
+  crewTypeId: number | null;
   position: string;
   description: string;
   status: 'Unprocessed' | 'Pencilled' | 'Booked';
@@ -51,6 +54,12 @@ export interface CrewBookingsJob {
   client: string;
   jobType: string;
   venue: string;
+  // Raw ids for the optional affinity feature - crewBossId is the same
+  // person as crewBoss above (Name2.NameCounter), handlerId is
+  // JOBS."Handler" (Users.UID, a HireTrack staff account - unrelated to
+  // Name2/crew people).
+  crewBossId: number | null;
+  handlerId: number | null;
   phases: CrewBookingsPhase[];
 }
 
@@ -67,6 +76,34 @@ export interface CrewBookingsData {
 export interface CrewJobDetail {
   jobRef: string;
   phases: CrewBookingsPhase[];
+  fetchedAt: string;
+}
+
+export interface CrewAttributeInfo {
+  description: string;
+  expiryDate: string | null;
+  expired: boolean;
+}
+
+export interface CrewAffinityScore {
+  score: number;
+  isNegative: boolean;
+}
+
+// Optional affinity/skills enrichment for the assignee picker (off by
+// default in the UI, a separate toggle) - see the "Surface crew affinity..."
+// plan. Mirrors a query pattern found via strings analysis of the HireTrack
+// NX client binary itself.
+export interface CrewCandidate {
+  name: string;
+  rating: number;
+  attributes: CrewAttributeInfo[];
+  handlerAffinity: CrewAffinityScore | null;
+  crewBossAffinity: CrewAffinityScore | null;
+}
+
+export interface CrewCandidatesResult {
+  candidates: CrewCandidate[];
   fetchedAt: string;
 }
 
@@ -180,5 +217,19 @@ export async function getCrewBookingsData(options?: { forceRefresh?: boolean }):
 // be current.
 export async function getCrewJobDetail(jobRef: string): Promise<CrewJobDetail> {
   const raw = await runCrewOdbcRead<Omit<CrewJobDetail, 'fetchedAt'>>({ operation: 'crew-job-detail', jobRef });
+  return { ...raw, fetchedAt: new Date().toISOString() };
+}
+
+// Deliberately uncached, same reasoning as getCrewJobDetail - scoped to the
+// ~100-person active roster, fast enough to always hit live.
+export async function getCrewCandidates(params: {
+  crewTypeId: number | null;
+  handlerId: number | null;
+  crewBossId: number | null;
+}): Promise<CrewCandidatesResult> {
+  const raw = await runCrewOdbcRead<Omit<CrewCandidatesResult, 'fetchedAt'>>({
+    operation: 'crew-candidates',
+    ...params,
+  });
   return { ...raw, fetchedAt: new Date().toISOString() };
 }

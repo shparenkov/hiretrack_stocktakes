@@ -81,7 +81,20 @@ const state = {
   // not-yet-confirmed row - this is what made "fill in several positions,
   // only one sticks" happen.
   pendingInput: new Map(),
+  // Optional affinity/skills mode - off by default (see AFFINITY_MODE_KEY
+  // below), a separate layer on top of the normal picker rather than a
+  // change to default behavior, since real affinity/skills data doesn't
+  // exist in HireTrack yet at the time this was built.
+  affinityMode: false,
 };
+
+const AFFINITY_MODE_KEY = "crewBookingsAffinityMode";
+try {
+  state.affinityMode = localStorage.getItem(AFFINITY_MODE_KEY) === "1";
+} catch (e) {
+  // localStorage can throw in some contexts (private browsing, blocked
+  // storage) - affinity mode just stays off, not worth failing over.
+}
 
 // Group-by field accessors, keyed to match the <select id="group-by"> values.
 const GROUP_FIELDS = {
@@ -283,6 +296,99 @@ function qtyClass(q) {
   return "q4";
 }
 
+// Optional affinity/skills enrichment (see state.affinityMode) - cached per
+// (crewTypeId, handlerId, crewBossId) combo since many positions in the same
+// phase often share a role, and every position in a job shares the same
+// job-level handler/crew-boss. Never fetched unless affinity mode is on.
+const candidatesCache = new Map(); // key -> array of candidates (or null while pending)
+
+function candidatesCacheKey(ctx) {
+  return `${ctx.crewTypeId}::${ctx.handlerId}::${ctx.crewBossId}`;
+}
+
+function positionAffinityContext(job, position) {
+  return { crewTypeId: position.crewTypeId, handlerId: job.handlerId, crewBossId: job.crewBossId };
+}
+
+async function fetchCandidates(ctx) {
+  const params = new URLSearchParams();
+  if (ctx.crewTypeId != null) params.set("crewTypeId", ctx.crewTypeId);
+  if (ctx.handlerId != null) params.set("handlerId", ctx.handlerId);
+  if (ctx.crewBossId != null) params.set("crewBossId", ctx.crewBossId);
+  try {
+    const resp = await fetch(`/api/crew-bookings/candidates?${params}`);
+    if (!resp.ok) return [];
+    const body = await resp.json();
+    return body.candidates || [];
+  } catch (e) {
+    console.error("Не удалось загрузить affinity/скиллы кандидатов:", e);
+    return [];
+  }
+}
+
+// Proactively warms the cache for every already-assigned position in a job,
+// so the position-row indicator (see renderPositionRow) can light up
+// without requiring someone to open that position's dropdown first. Called
+// after a job's detail loads and when affinity mode is switched on.
+async function prefetchAffinityForJob(job) {
+  if (!state.affinityMode) return;
+  const toFetch = new Map(); // key -> ctx
+  for (const phase of job.phases) {
+    for (const pos of phase.positions) {
+      if (!pos.assignee) continue;
+      const ctx = positionAffinityContext(job, pos);
+      const key = candidatesCacheKey(ctx);
+      if (!candidatesCache.has(key) && !toFetch.has(key)) toFetch.set(key, ctx);
+    }
+  }
+  if (!toFetch.size) return;
+  await Promise.all(
+    Array.from(toFetch.entries()).map(([key, ctx]) => fetchCandidates(ctx).then((data) => candidatesCache.set(key, data)))
+  );
+  render();
+}
+
+function getCachedCandidate(ctx, name) {
+  if (!name) return null;
+  const list = candidatesCache.get(candidatesCacheKey(ctx));
+  if (!list) return null;
+  return list.find((c) => c.name === name) || null;
+}
+
+// Combined rating + affinity score used to sort the enriched dropdown -
+// higher is better, a negative affinity counts against the person even if
+// their role rating is otherwise good.
+function candidateScore(c) {
+  let score = c.rating || 0;
+  if (c.handlerAffinity) score += c.handlerAffinity.isNegative ? -c.handlerAffinity.score : c.handlerAffinity.score;
+  if (c.crewBossAffinity) score += c.crewBossAffinity.isNegative ? -c.crewBossAffinity.score : c.crewBossAffinity.score;
+  return score;
+}
+
+function affinityDotHtml(affinity, label) {
+  if (!affinity) return `<span class="affinity-dot neutral" title="${label}: нет оценки"></span>`;
+  const cls = affinity.isNegative ? "negative" : affinity.score > 0 ? "positive" : "neutral";
+  const value = affinity.isNegative ? `-${affinity.score}` : `${affinity.score}`;
+  return `<span class="affinity-dot ${cls}" title="${label}: ${value}"></span>`;
+}
+
+function renderCandidateRow(c) {
+  const badges = c.attributes
+    .slice(0, 4)
+    .map(
+      (a) =>
+        `<span class="attr-badge${a.expired ? " expired" : ""}" title="${a.description}${a.expiryDate ? " — до " + a.expiryDate : ""}${a.expired ? " (просрочен)" : ""}">${(a.description || "").slice(0, 3)}</span>`
+    )
+    .join("");
+  return `<div class="assignee-dropdown-item candidate-item" data-name="${c.name}">
+    <span class="cand-name">${c.name}</span>
+    ${c.rating ? `<span class="cand-rating" title="Рейтинг под роль">★${c.rating}</span>` : ""}
+    ${affinityDotHtml(c.handlerAffinity, "Хендлер")}
+    ${affinityDotHtml(c.crewBossAffinity, "Крю-босс")}
+    ${badges}
+  </div>`;
+}
+
 // TShiftStatus per individual CrewShifts row - independent of the position's
 // own overall status. A shift added after the position was already
 // Pencilled/Booked starts at 0 ("Not Allocated" in HT) until explicitly
@@ -302,6 +408,26 @@ function formatConflicts(assignee, conflicts) {
   const shown = conflicts.slice(0, 3).map((c) => `${c.date}: ${c.jobRef} (${c.role})`);
   const extra = conflicts.length > 3 ? ` и ещё ${conflicts.length - 3}` : "";
   return `⚠ ${assignee || "Человек"} уже занят(а): ${shown.join("; ")}${extra}`;
+}
+
+// Position-row half of the affinity/skills mode (see state.affinityMode) -
+// the dropdown (renderCandidateRow) shows full detail while picking; this
+// is a lighter always-visible flag on an already-assigned position, only
+// when there's something actually worth noticing (negative affinity or an
+// expired attribute), quiet otherwise so a good match doesn't add noise.
+// Relies on prefetchAffinityForJob having already warmed the cache - shows
+// nothing until that resolves, then a follow-up render() picks it up.
+function formatAffinityIssues(job, position) {
+  if (!position.assignee) return null;
+  const candidate = getCachedCandidate(positionAffinityContext(job, position), position.assignee);
+  if (!candidate) return null;
+  const issues = [];
+  if (candidate.handlerAffinity && candidate.handlerAffinity.isNegative) issues.push("конфликт с хендлером");
+  if (candidate.crewBossAffinity && candidate.crewBossAffinity.isNegative) issues.push("конфликт с крю-боссом");
+  const expired = candidate.attributes.filter((a) => a.expired).map((a) => a.description);
+  if (expired.length) issues.push("просрочен(ы): " + expired.join(", "));
+  if (!issues.length) return null;
+  return `⚠ ${position.assignee}: ${issues.join("; ")}`;
 }
 
 function renderPositionRow(job, phase, position, phaseIdx, posIdx) {
@@ -346,6 +472,7 @@ function renderPositionRow(job, phase, position, phaseIdx, posIdx) {
   const error = state.assignErrors.get(key);
   const conflicts = state.assignWarnings.get(key);
   const warning = conflicts && conflicts.length ? formatConflicts(position.assignee, conflicts) : null;
+  const affinityWarning = state.affinityMode ? formatAffinityIssues(job, position) : null;
   const placeholder = isBooked ? "Забукано" : isPencilled ? "В резерве" : "Unprocessed — назначить...";
   const hasRoleNote = !!(position.roleNotes && position.roleNotes.trim());
   return `<div class="row position ${stateClass}">
@@ -414,6 +541,7 @@ function renderPositionRow(job, phase, position, phaseIdx, posIdx) {
       </div>
       ${error ? `<div class="assignee-error">${error}</div>` : ""}
       ${warning ? `<div class="assignee-warning">${warning}</div>` : ""}
+      ${affinityWarning ? `<div class="assignee-warning">${affinityWarning}</div>` : ""}
     </div>
     <div class="cell col-crew position-description">${position.description || ""}</div>
     <div class="day-cells">${dayCells.join("")}</div>
@@ -516,6 +644,7 @@ async function loadJobDetail(jobId) {
     const data = await resp.json();
     job.phases = data.phases;
     render();
+    void prefetchAffinityForJob(job); // fire-and-forget, own render() when it resolves
   } catch (e) {
     console.error("Не удалось загрузить детали работы " + jobId + ":", e);
   }
@@ -761,15 +890,61 @@ function positionAssigneeDropdown(input) {
   assigneeDropdown.style.width = `${rect.width}px`;
 }
 
-function openAssigneeDropdown(input) {
-  activeAssigneeInput = input;
+// Enriched candidates for the dropdown currently open, if affinity mode is
+// on - null while a fetch is in flight, so renderAssigneeDropdownContent
+// can show a loading state instead of an empty list.
+let activeCandidates = null;
+
+function renderAssigneeDropdownContent(input) {
   const query = input.value.trim().toLowerCase();
-  const matches = (query ? CREW.filter((name) => name.toLowerCase().includes(query)) : CREW).slice(0, 50);
-  assigneeDropdown.innerHTML = matches.length
-    ? matches.map((name) => `<div class="assignee-dropdown-item" data-name="${name}">${name}</div>`).join("")
-    : `<div class="assignee-dropdown-empty">Никого не найдено</div>`;
+  if (state.affinityMode) {
+    if (!activeCandidates) {
+      assigneeDropdown.innerHTML = `<div class="assignee-dropdown-empty">Загрузка affinity/скиллов…</div>`;
+    } else {
+      const matches = activeCandidates
+        .filter((c) => c.name.toLowerCase().includes(query))
+        .sort((a, b) => candidateScore(b) - candidateScore(a) || a.name.localeCompare(b.name, "ru"))
+        .slice(0, 50);
+      assigneeDropdown.innerHTML = matches.length
+        ? matches.map(renderCandidateRow).join("")
+        : `<div class="assignee-dropdown-empty">Никого не найдено</div>`;
+    }
+  } else {
+    const matches = (query ? CREW.filter((name) => name.toLowerCase().includes(query)) : CREW).slice(0, 50);
+    assigneeDropdown.innerHTML = matches.length
+      ? matches.map((name) => `<div class="assignee-dropdown-item" data-name="${name}">${name}</div>`).join("")
+      : `<div class="assignee-dropdown-empty">Никого не найдено</div>`;
+  }
   positionAssigneeDropdown(input);
   assigneeDropdown.style.display = "block";
+}
+
+function openAssigneeDropdown(input) {
+  activeAssigneeInput = input;
+  if (!state.affinityMode) {
+    activeCandidates = null;
+    renderAssigneeDropdownContent(input);
+    return;
+  }
+  const job = JOBS.find((j) => j.id === input.dataset.job);
+  const phase = job.phases[Number(input.dataset.phase)];
+  const position = phase.positions[Number(input.dataset.pos)];
+  const ctx = positionAffinityContext(job, position);
+  const key = candidatesCacheKey(ctx);
+  if (candidatesCache.has(key)) {
+    activeCandidates = candidatesCache.get(key);
+    renderAssigneeDropdownContent(input);
+  } else {
+    activeCandidates = null;
+    renderAssigneeDropdownContent(input);
+    fetchCandidates(ctx).then((data) => {
+      candidatesCache.set(key, data);
+      if (activeAssigneeInput === input) {
+        activeCandidates = data;
+        renderAssigneeDropdownContent(input);
+      }
+    });
+  }
 }
 
 document.getElementById("gantt").addEventListener("focusin", (ev) => {
@@ -1079,6 +1254,24 @@ document.getElementById("status-filter").addEventListener("change", (ev) => {
 });
 document.getElementById("status-and-above").addEventListener("change", (ev) => {
   state.statusAndAbove = ev.target.checked;
+  render();
+});
+const affinityModeCheckbox = document.getElementById("affinity-mode");
+affinityModeCheckbox.checked = state.affinityMode;
+affinityModeCheckbox.addEventListener("change", (ev) => {
+  state.affinityMode = ev.target.checked;
+  try {
+    localStorage.setItem(AFFINITY_MODE_KEY, state.affinityMode ? "1" : "0");
+  } catch (e) {
+    // non-fatal, see the initial localStorage read above
+  }
+  if (state.affinityMode) {
+    // Backfill row indicators for jobs that are already expanded, instead
+    // of waiting for their next periodic detail refresh.
+    for (const job of JOBS) {
+      if (state.expandedJobs.has(job.id)) void prefetchAffinityForJob(job);
+    }
+  }
   render();
 });
 document.getElementById("job-search").addEventListener("input", (ev) => {

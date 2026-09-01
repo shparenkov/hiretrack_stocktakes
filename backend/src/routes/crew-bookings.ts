@@ -1,6 +1,6 @@
 import { Request, Response, Router } from 'express';
 import { z } from 'zod';
-import { getCrewBookingsData, getCrewJobDetail } from '../services/hiretrack-crew-read';
+import { getCrewBookingsData, getCrewCandidates, getCrewJobDetail } from '../services/hiretrack-crew-read';
 import {
   assignCrewPosition,
   setCrewRoleNote,
@@ -78,6 +78,27 @@ crewBookingsRouter.get('/job-detail', async (req: Request, res: Response) => {
   }
   try {
     const data = await getCrewJobDetail(jobRef);
+    res.json(data);
+  } catch (error) {
+    res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+function parseOptionalId(value: unknown): number | null {
+  if (typeof value !== 'string' || value === '') {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+crewBookingsRouter.get('/candidates', async (req: Request, res: Response) => {
+  try {
+    const data = await getCrewCandidates({
+      crewTypeId: parseOptionalId(req.query.crewTypeId),
+      handlerId: parseOptionalId(req.query.handlerId),
+      crewBossId: parseOptionalId(req.query.crewBossId),
+    });
     res.json(data);
   } catch (error) {
     res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
