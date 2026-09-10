@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <title>Crew Bookings — HireTrack NX</title>
-  <link rel="stylesheet" href="styles.css?v=13" />
+  <link rel="stylesheet" href="styles.css?v=14" />
 </head>
 <body>
   <div class="toolbar">
@@ -42,7 +42,10 @@
   </div>
   <div class="toolbar toolbar-filters">
     <label class="window-field">Поиск
-      <input type="text" id="job-search" placeholder="Номер или название работы..." />
+      <div id="job-search-box" class="search-box">
+        <span id="job-search-chips"></span>
+        <input type="text" id="job-search" placeholder="Номер или название, Enter — закрепить..." />
+      </div>
     </label>
     <label class="window-field">Статус
       <span class="window-field-row">
@@ -71,6 +74,6 @@
   <div class="gantt-scroll">
     <div id="gantt"></div>
   </div>
-  <script src="app.js?v=18"></script>
+  <script src="app.js?v=19"></script>
 </body>
 </html>

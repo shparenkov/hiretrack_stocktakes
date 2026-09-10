@@ -82,7 +82,30 @@ body { height: 100vh; display: flex; flex-direction: column; }
 }
 .checkbox-label { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text); cursor: pointer; }
 .checkbox-label input { width: auto !important; }
-.window-field input#job-search { width: 220px; }
+
+/* Tag-input style multi-term search - typed text lives in the same box as
+   already-committed chips (Enter pins the current text as a chip), so
+   pinning several project numbers reads as "type, Enter, type, Enter"
+   inside one control rather than a separate list elsewhere on the page. */
+.search-box {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+  border: 1px solid var(--border); background: #fff; padding: 3px 4px;
+  min-width: 220px; max-width: 360px;
+}
+.search-box input#job-search {
+  border: none !important; outline: none; flex: 1 1 90px; min-width: 90px;
+  padding: 2px !important; font: inherit; width: auto;
+}
+.search-chip {
+  display: inline-flex; align-items: center; gap: 3px; white-space: nowrap;
+  background: var(--purple-light); color: var(--purple); border: 1px solid var(--purple);
+  padding: 1px 4px; font-size: 11px;
+}
+.search-chip button {
+  border: none; background: none; cursor: pointer; color: var(--purple);
+  font-weight: 700; padding: 0; line-height: 1; font-size: 11px;
+}
+.search-chip button:hover { color: var(--red); }
 
 .load-status {
   padding: 8px 14px; font-size: 12px; color: var(--muted); background: var(--bg-alt);

@@ -67,7 +67,8 @@ const state = {
   expandedPhases: new Set(), // key: `${jobId}::${phaseIdx}`
   statusFilter: 1, // defcon.SortOrder to match
   statusAndAbove: true, // false = exact match, true = >= statusFilter
-  searchQuery: "",
+  searchQuery: "", // text currently being typed, not yet pinned
+  searchTerms: [], // pinned search terms (Enter in the search box) - see commitSearchTerm()
   groupBy: "none",
   assignErrors: new Map(), // key: `${jobId}::${phaseIdx}::${posIdx}` -> message
   // Non-blocking "this person is already booked elsewhere" heads-up from
@@ -595,11 +596,19 @@ function render() {
     state.statusAndAbove ? (j.statusRank ?? 0) >= state.statusFilter : (j.statusRank ?? 0) === state.statusFilter
   );
   visibleJobs = visibleJobs.filter(jobOverlapsWindow);
-  const query = state.searchQuery.trim().toLowerCase();
-  if (query) {
-    visibleJobs = visibleJobs.filter(
-      (j) => j.id.toLowerCase().includes(query) || j.name.toLowerCase().includes(query)
-    );
+  // Pinned terms (Enter in the search box, see commitSearchTerm) plus
+  // whatever's still being typed - a job matches if ANY term matches its
+  // id or name, so pinning several project numbers shows all of them at
+  // once instead of narrowing down to their intersection.
+  const searchTerms = state.searchTerms.map((t) => t.toLowerCase());
+  const liveQuery = state.searchQuery.trim().toLowerCase();
+  if (liveQuery) searchTerms.push(liveQuery);
+  if (searchTerms.length) {
+    visibleJobs = visibleJobs.filter((j) => {
+      const idL = j.id.toLowerCase();
+      const nameL = j.name.toLowerCase();
+      return searchTerms.some((t) => idL.includes(t) || nameL.includes(t));
+    });
   }
   const groupKey = GROUP_FIELDS[state.groupBy];
   if (groupKey) {
@@ -1368,9 +1377,58 @@ affinityModeCheckbox.addEventListener("change", (ev) => {
   }
   render();
 });
-document.getElementById("job-search").addEventListener("input", (ev) => {
+const jobSearchInput = document.getElementById("job-search");
+const jobSearchChips = document.getElementById("job-search-chips");
+
+function renderSearchChips() {
+  jobSearchChips.innerHTML = state.searchTerms
+    .map(
+      (term, idx) =>
+        `<span class="search-chip">${term}<button type="button" data-remove-term="${idx}" title="Убрать">&#10005;</button></span>`
+    )
+    .join("");
+}
+
+// Enter pins whatever's currently typed as a standalone filter term and
+// clears the box for the next one, so pinning several project numbers is
+// "type, Enter, type, Enter..." rather than editing one combined string -
+// matches how a multi-select tag input usually works.
+function commitSearchTerm(rawValue) {
+  const value = rawValue.trim();
+  if (!value) return;
+  if (!state.searchTerms.some((t) => t.toLowerCase() === value.toLowerCase())) {
+    state.searchTerms.push(value);
+  }
+  state.searchQuery = "";
+  jobSearchInput.value = "";
+  renderSearchChips();
+  render();
+}
+
+function removeSearchTerm(idx) {
+  state.searchTerms.splice(idx, 1);
+  renderSearchChips();
+  render();
+}
+
+jobSearchInput.addEventListener("input", (ev) => {
   state.searchQuery = ev.target.value;
   render();
+});
+jobSearchInput.addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter") {
+    ev.preventDefault();
+    commitSearchTerm(jobSearchInput.value);
+  } else if (ev.key === "Backspace" && !jobSearchInput.value && state.searchTerms.length) {
+    // Empty box + Backspace removes the last pinned chip - standard
+    // tag-input convenience, avoids reaching for the chip's own × button.
+    removeSearchTerm(state.searchTerms.length - 1);
+  }
+});
+jobSearchChips.addEventListener("click", (ev) => {
+  const btn = ev.target.closest("[data-remove-term]");
+  if (!btn) return;
+  removeSearchTerm(Number(btn.dataset.removeTerm));
 });
 document.getElementById("group-by").addEventListener("change", (ev) => {
   state.groupBy = ev.target.value;
@@ -1396,7 +1454,11 @@ const HELP_SECTIONS = [
         desc:
           "Показывает работы с выбранным статусом (Запрос/Бронь/Подтверждено/В работе) или, если отмечено «и выше», с этим статусом и всеми более «продвинутыми».",
       },
-      { term: "Поиск", desc: "Фильтр по номеру или названию работы среди уже загруженного (текущего периода)." },
+      {
+        term: "Поиск",
+        desc:
+          "Фильтр по номеру или названию работы среди уже загруженного (текущего периода). Enter закрепляет введённое как отдельную метку рядом (можно закрепить несколько номеров подряд — показываются работы, подходящие под любую из меток); Backspace на пустом поле убирает последнюю метку, либо жмите ✕ на конкретной.",
+      },
       { term: "Группировка", desc: "Пересортировывает и подписывает список работ по выбранному полю." },
     ],
   },
