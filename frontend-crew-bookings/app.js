@@ -1330,6 +1330,146 @@ document.getElementById("group-by").addEventListener("change", (ev) => {
   render();
 });
 
+// In-app справка (Help) - a plain-language reference for the buttons/icons/
+// warnings built up across this page over time, so people using it don't
+// have to remember what "⟳" or the amber warning under a name means. Kept
+// as one data array so a new feature just needs one new entry here, not a
+// separate doc that drifts out of sync with the actual UI.
+const HELP_SECTIONS = [
+  {
+    title: "Период и фильтры",
+    items: [
+      {
+        term: "Начальная дата / «, ‹, ›, » / 3д-30д / Свой период",
+        desc:
+          "Задают видимый диапазон дат. Это не просто «что видно» — сами работы теперь подгружаются именно под этот диапазон: работа появится в списке, если её даты попадают в выбранный период, сколько бы времени назад или вперёд это ни было. Переключение периода делает новый запрос к HireTrack (может занять секунду-две).",
+      },
+      {
+        term: "Статус / «и выше»",
+        desc:
+          "Показывает работы с выбранным статусом (Запрос/Бронь/Подтверждено/В работе) или, если отмечено «и выше», с этим статусом и всеми более «продвинутыми».",
+      },
+      { term: "Поиск", desc: "Фильтр по номеру или названию работы среди уже загруженного (текущего периода)." },
+      { term: "Группировка", desc: "Пересортировывает и подписывает список работ по выбранному полю." },
+    ],
+  },
+  {
+    title: "Строка работы (Job)",
+    items: [
+      { term: "+ / −", desc: "Разворачивает/сворачивает работу до фаз и позиций. При разворачивании подгружается детальная информация по этой работе и дальше сама обновляется каждые ~25 сек, пока строка раскрыта." },
+      { term: "Цветной бар в строке работы", desc: "Показывает реальный диапазон дат по crew-активности (Crew_header/CrewActivities), а не Due Out/Due Back самой работы — эти поля в HireTrack не всегда совпадают с фактическим графиком." },
+    ],
+  },
+  {
+    title: "Позиция (роль) — поле назначения",
+    items: [
+      { term: "Поле ввода фамилии", desc: "Начните вводить — появится выпадающий список с поиском по действующему составу персонала." },
+      { term: "P", desc: "Поставить назначенного человека под резерв (Pencilled)." },
+      { term: "B", desc: "Забукать (Booked) — финальное подтверждение." },
+      { term: "✕", desc: "Снять человека с позиции." },
+      {
+        term: "⟳ «Аллоцировать на новые смены»",
+        desc:
+          "Появляется, когда позиция уже занята (Pencilled/Booked), но к ней добавили новые смены/дни ПОСЛЕ назначения — такие новые смены в HireTrack стартуют со статусом «Не аллоцировано», даже если человек на роли уже стоит. Кнопка проставляет этим сменам статус позиции, чтобы они тоже считались занятыми этим человеком. То же действие есть и в самом HireTrack NX под тем же названием.",
+      },
+      {
+        term: "Заштрихованная ячейка дня",
+        desc: "Смена реально не аллоцирована, хотя позиция уже занята — именно её и закрывает кнопка ⟳ выше.",
+      },
+      { term: "✎ рядом с названием роли", desc: "Заметка по роли (Crew.Notes) — общая для всех однотипных позиций одного запроса (например, всех «3× Rigger»)." },
+      { term: "Точка в углу ячейки дня", desc: "Есть заметка по конкретной смене/дню (CrewShifts.Notes) — клик по ячейке открывает её на просмотр/редактирование." },
+    ],
+  },
+  {
+    title: "Предупреждения под полем назначения",
+    items: [
+      {
+        term: "Жёлтое предупреждение «уже занят(а) ...»",
+        desc: "Этот человек в ту же дату уже назначен на другую работу (та же проверка, что делает сам HireTrack NX). Не блокирует назначение — просто предупреждает, решение остаётся за вами.",
+      },
+      {
+        term: "Жёлтое предупреждение про хендлера/крю-босса/просрочку",
+        desc: "Появляется только при включённом режиме «Affinity/скиллы» (см. ниже) — отрицательная совместимость с хендлером или крю-боссом этой работы, либо просроченный сертификат у уже назначенного человека.",
+      },
+      {
+        term: "«Данные устарели» (красное, после попытки назначить/снять)",
+        desc: "Кто-то поменял эту позицию в самом HireTrack NX (или в другой вкладке) уже после того, как страница её загрузила. Нажмите на индикатор свежести данных внизу тулбара, чтобы обновить, и попробуйте снова.",
+      },
+    ],
+  },
+  {
+    title: "Affinity/скиллы (переключатель в тулбаре)",
+    items: [
+      {
+        term: "Что включает",
+        desc:
+          "В выпадающем списке кандидатов появляется рейтинг под эту роль (★), точки совместимости с хендлером и крю-боссом работы (серая — нет оценки, зелёная — положительная, красная — отрицательная) и значки навыков/сертификатов (например ОТ/ПБ/ЭБ; просроченный — отмечен отдельно). Список сортируется по рейтингу/совместимости, а не по алфавиту.",
+      },
+      { term: "По умолчанию выключено", desc: "Реальные данные по affinity/сертификатам в HireTrack только начинают заполняться, поэтому режим — опциональный слой поверх обычной работы, а не замена ей." },
+    ],
+  },
+  {
+    title: "Данные из HireTrack",
+    items: [
+      {
+        term: "Индикатор внизу тулбара",
+        desc:
+          "Показывает, сколько времени назад данные реально были получены из HireTrack (серый — недавно, жёлтый — 2-10 мин, красный — дольше). Список работ обновляется сам каждую минуту, раскрытые работы — каждые ~25 сек; клик по индикатору обновляет немедленно, не дожидаясь таймера.",
+      },
+    ],
+  },
+];
+
+function renderHelpModal() {
+  const sections = HELP_SECTIONS.map(
+    (section) => `
+      <section class="help-section">
+        <h3>${section.title}</h3>
+        <dl>
+          ${section.items
+            .map((item) => `<dt>${item.term}</dt><dd>${item.desc}</dd>`)
+            .join("")}
+        </dl>
+      </section>`
+  ).join("");
+  return `
+    <div class="help-backdrop">
+      <div class="help-modal" role="dialog" aria-modal="true">
+        <div class="help-modal-header">
+          <h2>Справка по странице Crew Bookings</h2>
+          <button type="button" class="help-close" title="Закрыть">&#10005;</button>
+        </div>
+        <div class="help-modal-body">${sections}</div>
+      </div>
+    </div>`;
+}
+
+const helpButton = document.getElementById("help-button");
+let helpModalEl = null;
+
+function closeHelpModal() {
+  if (helpModalEl) {
+    helpModalEl.remove();
+    helpModalEl = null;
+  }
+}
+
+function openHelpModal() {
+  if (helpModalEl) return;
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = renderHelpModal();
+  helpModalEl = wrapper.firstElementChild;
+  document.body.appendChild(helpModalEl);
+  helpModalEl.addEventListener("mousedown", (ev) => {
+    if (ev.target === helpModalEl || ev.target.closest(".help-close")) closeHelpModal();
+  });
+}
+
+helpButton.addEventListener("click", openHelpModal);
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape" && helpModalEl) closeHelpModal();
+});
+
 async function boot() {
   const loadStatus = document.getElementById("load-status");
   setWindow(todayStr(), DAY_COUNT); // must run before loadCrewData() - it reads start/end
