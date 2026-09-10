@@ -1180,6 +1180,53 @@ async function loadCrewData(options) {
   for (const jobId of Array.from(state.expandedJobs)) {
     if (!jobIds.has(jobId)) collapseJob(jobId);
   }
+  void prefetchDayCounts(); // fire-and-forget, fills in collapsed-row bar counts
+}
+
+// Fills in the per-day shift-count overlay (see renderJobRow's
+// dayCountCells / jobDayShiftCount) for jobs that are still collapsed and
+// were never expanded, so it doesn't only show up once someone opens a job.
+// Deliberately reuses the SAME per-job, Job_no-scoped /job-detail fetch an
+// expanded row already uses (confirmed live, ~0.5-1.8s even for the largest
+// job in production) instead of one bulk query across every visible job's
+// positions/shifts - that bulk shape is exactly what caused the original
+// ~85s slowdown (see hiretrack_crew_read.py's read_crew_list docstring),
+// and the id-count cliff there was measured, not theoretical, so this
+// avoids relying on "the window is probably small enough" to stay safe.
+// Runs a few jobs at a time in the background and fills bars in as each one
+// arrives - user explicitly confirmed non-instant is fine here.
+const DAY_COUNT_PREFETCH_CONCURRENCY = 3;
+let dayCountPrefetchRunning = false;
+
+async function prefetchDayCounts() {
+  if (dayCountPrefetchRunning) return;
+  dayCountPrefetchRunning = true;
+  try {
+    const pending = JOBS.filter((j) => !j.phases.length && jobOverlapsWindow(j));
+    let cursor = 0;
+    async function worker() {
+      while (cursor < pending.length) {
+        const job = pending[cursor++];
+        try {
+          const resp = await fetch(`/api/crew-bookings/job-detail?jobRef=${encodeURIComponent(job.id)}`);
+          if (!resp.ok) continue;
+          const data = await resp.json();
+          const current = JOBS.find((j) => j.id === job.id);
+          // Only apply if still collapsed and nothing else (e.g. the user
+          // expanding it in the meantime) already populated phases first.
+          if (current && !current.phases.length && !state.expandedJobs.has(current.id)) {
+            current.phases = data.phases;
+            render();
+          }
+        } catch (e) {
+          console.error("Не удалось предзагрузить смены для " + job.id + ":", e);
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: DAY_COUNT_PREFETCH_CONCURRENCY }, worker));
+  } finally {
+    dayCountPrefetchRunning = false;
+  }
 }
 
 // No page-wide manual refresh button - the job list and every expanded
@@ -1358,6 +1405,11 @@ const HELP_SECTIONS = [
     items: [
       { term: "+ / −", desc: "Разворачивает/сворачивает работу до фаз и позиций. При разворачивании подгружается детальная информация по этой работе и дальше сама обновляется каждые ~25 сек, пока строка раскрыта." },
       { term: "Цветной бар в строке работы", desc: "Показывает реальный диапазон дат по crew-активности (Crew_header/CrewActivities), а не Due Out/Due Back самой работы — эти поля в HireTrack не всегда совпадают с фактическим графиком." },
+      {
+        term: "Цифры на баре (счётчик смен по дням)",
+        desc:
+          "Сколько смен назначено в этот день по этой работе — видно даже не разворачивая работу. Подгружается в фоне после появления списка (по несколько работ параллельно), поэтому может появиться не сразу, особенно у больших/долгих работ.",
+      },
     ],
   },
   {
