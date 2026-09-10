@@ -60,10 +60,18 @@ function handleWriteError(res: Response, error: unknown) {
   res.status(502).json({ error: message });
 }
 
+const isoDatePattern = /^\d{4}-\d{2}-\d{2}$/;
+
 crewBookingsRouter.get('/data', async (req: Request, res: Response) => {
+  const windowStart = typeof req.query.windowStart === 'string' ? req.query.windowStart : '';
+  const windowEnd = typeof req.query.windowEnd === 'string' ? req.query.windowEnd : '';
+  if (!isoDatePattern.test(windowStart) || !isoDatePattern.test(windowEnd)) {
+    res.status(400).json({ error: "'windowStart' and 'windowEnd' query params (YYYY-MM-DD) are required" });
+    return;
+  }
   try {
     const forceRefresh = req.query.refresh === '1' || req.query.refresh === 'true';
-    const data = await getCrewBookingsData({ forceRefresh });
+    const data = await getCrewBookingsData({ windowStart, windowEnd, forceRefresh });
     res.json(data);
   } catch (error) {
     res.status(502).json({ error: error instanceof Error ? error.message : String(error) });

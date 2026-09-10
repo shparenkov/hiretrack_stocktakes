@@ -1151,8 +1151,9 @@ setInterval(updateFreshnessLabel, 15000);
 // doesn't flash back to "collapsed-looking" every time the list re-polls.
 async function loadCrewData(options) {
   const forceRefresh = options && options.forceRefresh;
-  const url = forceRefresh ? "/api/crew-bookings/data?refresh=1" : "/api/crew-bookings/data";
-  const resp = await fetch(url);
+  const params = new URLSearchParams({ windowStart: fmt(start), windowEnd: fmt(end) });
+  if (forceRefresh) params.set("refresh", "1");
+  const resp = await fetch(`/api/crew-bookings/data?${params}`);
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
     throw new Error(text || `HTTP ${resp.status}`);
@@ -1170,6 +1171,15 @@ async function loadCrewData(options) {
   CREW = data.crewRoster;
   lastFetchedAt = data.fetchedAt ? new Date(data.fetchedAt) : new Date();
   updateFreshnessLabel();
+  // The job list is now scoped to the current date window (see backend
+  // change 2026-09-10) rather than always holding every not-yet-lapsed job
+  // regardless of window - a job that fell out of range on this fetch is
+  // gone from JOBS entirely, so any stale expanded/timer state pointing at
+  // it needs cleaning up instead of quietly polling a job that can't render.
+  const jobIds = new Set(JOBS.map((j) => j.id));
+  for (const jobId of Array.from(state.expandedJobs)) {
+    if (!jobIds.has(jobId)) collapseJob(jobId);
+  }
 }
 
 // No page-wide manual refresh button - the job list and every expanded
@@ -1234,12 +1244,29 @@ function markActivePreset() {
   presetButtons.forEach((b) => b.classList.toggle("active", Number(b.dataset.days) === DAY_COUNT));
 }
 
-function applyWindow(startStr, length) {
-  setWindow(startStr, length);
+function syncWindowControls(startStr) {
   windowStartInput.value = startStr;
   updateStartDisplay(startStr);
   windowCustomInput.value = DAY_COUNT;
   markActivePreset();
+}
+
+// The job list itself is now scoped to the selected window (see
+// hiretrack_crew_read.py, 2026-09-10) rather than a fixed "today +/- ~60
+// days" set that the window merely displayed a slice of - so moving the
+// window has to re-fetch, not just re-render from data already in hand.
+// Errors are swallowed (logged only) here: this runs from UI navigation on
+// an already-loaded page, so a failed re-fetch should leave the page
+// usable with its previous data rather than surface as a hard failure -
+// contrast with boot()'s own explicit error handling for the first load.
+async function applyWindow(startStr, length) {
+  setWindow(startStr, length);
+  syncWindowControls(startStr);
+  try {
+    await loadCrewData();
+  } catch (e) {
+    console.error("Не удалось загрузить данные для выбранного периода:", e);
+  }
   render();
 }
 
@@ -1305,6 +1332,8 @@ document.getElementById("group-by").addEventListener("change", (ev) => {
 
 async function boot() {
   const loadStatus = document.getElementById("load-status");
+  setWindow(todayStr(), DAY_COUNT); // must run before loadCrewData() - it reads start/end
+  syncWindowControls(todayStr());
   try {
     await loadCrewData();
     loadStatus.style.display = "none";
@@ -1313,7 +1342,7 @@ async function boot() {
     loadStatus.textContent = "Не удалось загрузить данные из HireTrack: " + e.message;
     loadStatus.classList.add("error");
   }
-  applyWindow(todayStr(), DAY_COUNT);
+  render();
 }
 
 boot();

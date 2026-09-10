@@ -178,34 +178,65 @@ function runCrewOdbcRead<T>(request: Record<string, unknown>): Promise<T> {
 
 const configuredCacheMs = Number(process.env.CREW_ODBC_CACHE_MS || 30000);
 const cacheMs = Number.isFinite(configuredCacheMs) ? Math.max(0, configuredCacheMs) : 30000;
-let dataCache: { expiresAt: number; data: CrewBookingsData } | null = null;
-let pendingRead: Promise<CrewBookingsData> | null = null;
 
-function refreshCrewData(): Promise<CrewBookingsData> {
-  if (!pendingRead) {
-    pendingRead = runCrewOdbcRead<Omit<CrewBookingsData, 'fetchedAt'>>({ operation: 'crew-data' })
+// Keyed by "windowStart|windowEnd" rather than a single global cache - the
+// job list is now scoped to whatever date window the caller asked for (see
+// hiretrack_crew_read.py's _candidate_jobs docstring, 2026-09-10), so
+// different windows are genuinely different result sets. Bounded to a
+// handful of entries since in practice everyone's clustered around a small
+// number of windows (mostly "today") - not meant to cache someone scrubbing
+// through years of history.
+const MAX_CACHE_ENTRIES = 20;
+const dataCache = new Map<string, { expiresAt: number; data: CrewBookingsData }>();
+const pendingReads = new Map<string, Promise<CrewBookingsData>>();
+
+function cacheKey(windowStart: string, windowEnd: string) {
+  return `${windowStart}|${windowEnd}`;
+}
+
+function refreshCrewData(windowStart: string, windowEnd: string): Promise<CrewBookingsData> {
+  const key = cacheKey(windowStart, windowEnd);
+  let pending = pendingReads.get(key);
+  if (!pending) {
+    pending = runCrewOdbcRead<Omit<CrewBookingsData, 'fetchedAt'>>({
+      operation: 'crew-data',
+      windowStart,
+      windowEnd,
+    })
       .then((raw) => {
         const data: CrewBookingsData = { ...raw, fetchedAt: new Date().toISOString() };
-        dataCache = { expiresAt: Date.now() + cacheMs, data };
+        dataCache.set(key, { expiresAt: Date.now() + cacheMs, data });
+        if (dataCache.size > MAX_CACHE_ENTRIES) {
+          const oldestKey = dataCache.keys().next().value;
+          if (oldestKey !== undefined) dataCache.delete(oldestKey);
+        }
         return data;
       })
       .finally(() => {
-        pendingRead = null;
+        pendingReads.delete(key);
       });
+    pendingReads.set(key, pending);
   }
-  return pendingRead;
+  return pending;
 }
 
-export async function getCrewBookingsData(options?: { forceRefresh?: boolean }): Promise<CrewBookingsData> {
-  if (options?.forceRefresh || !dataCache) {
-    return refreshCrewData();
+export async function getCrewBookingsData(options: {
+  windowStart: string;
+  windowEnd: string;
+  forceRefresh?: boolean;
+}): Promise<CrewBookingsData> {
+  const { windowStart, windowEnd, forceRefresh } = options;
+  const key = cacheKey(windowStart, windowEnd);
+  const cached = dataCache.get(key);
+  if (forceRefresh || !cached) {
+    return refreshCrewData(windowStart, windowEnd);
   }
-  if (dataCache.expiresAt <= Date.now()) {
-    void refreshCrewData().catch((error) => {
+  if (cached.expiresAt <= Date.now()) {
+    void refreshCrewData(windowStart, windowEnd).catch((error) => {
       console.error('Background crew-bookings refresh failed:', error);
     });
   }
-  return dataCache.data;
+  return cached.data;
 }
 
 // Position/shift detail for one job, fetched on demand (job row expanded,

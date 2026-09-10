@@ -1,7 +1,7 @@
 import json
 import os
 import sys
-from datetime import date, timedelta
+from datetime import date
 
 import pyodbc
 
@@ -12,7 +12,6 @@ import pyodbc
 
 DSN = os.environ.get("CREW_ODBC_DSN", "HireTrack DSN")
 QUERY_TIMEOUT = int(os.environ.get("CREW_ODBC_QUERY_TIMEOUT", "60"))
-HORIZON_DAYS = int(os.environ.get("CREW_ODBC_HORIZON_DAYS", "60"))
 sys.stdin.reconfigure(encoding="utf-8")
 sys.stdout.reconfigure(encoding="utf-8")
 
@@ -27,11 +26,17 @@ def display_name(surname, forename):
     return f"{surname} {forename}".strip()
 
 
-def _candidate_jobs(cursor):
-    # Shared by the list and per-job detail: every NewCrewing job whose
-    # crewing window overlaps the next HORIZON_DAYS days.
-    today = date.today()
-    horizon = today + timedelta(days=HORIZON_DAYS)
+def _candidate_jobs(cursor, window_start, window_end):
+    # Shared by the list and per-job detail: every NewCrewing job whose own
+    # [Due Out, Due Back] span overlaps the caller-supplied window. Used to
+    # be a fixed "today .. today+60" horizon regardless of what the user had
+    # selected in the UI - meaning a job whose real dates were more than ~2
+    # months in the past or future could never appear no matter what date
+    # range someone navigated to. Confirmed live (2026-09-10, job Р7124МСК,
+    # a single real one-day booking on 2026-08-04 with a person actually
+    # assigned): the user explicitly wants "any job per the selected date
+    # filter, no matter how far in the past or future" - so the window IS
+    # the filter now, not an internal cap layered on top of it.
     cursor.execute(
         """
         SELECT JobNo, Job_Ref, Job_Title, Status, "Due Out", "Due Back", xCrewManager,
@@ -39,16 +44,17 @@ def _candidate_jobs(cursor):
         FROM JOBS
         WHERE NewCrewing = TRUE
           AND Status IN (1, 2, 3, 4, 6)
+          AND "Due Out" <= ?
           AND "Due Back" >= ?
         ORDER BY "Due Out" ASC
         """,
-        today,
+        window_end,
+        window_start,
     )
-    all_jobs = cursor.fetchall()
-    return [j for j in all_jobs if j[4].date() <= horizon]
+    return cursor.fetchall()
 
 
-def read_crew_list(cursor):
+def read_crew_list(cursor, window_start, window_end):
     # Lightweight job list ONLY - JOBS/Crew_header/CrewActivities, deliberately
     # never CrewPositions/CrewShifts. Confirmed live (2026-08-31): neither
     # CrewPositions.xCrewRequest nor CrewShifts.xPosition has an index, and a
@@ -60,7 +66,14 @@ def read_crew_list(cursor):
     # detail is fetched on demand, scoped to one job at a time, in
     # read_job_detail() below - triggered by the frontend when a job row is
     # actually expanded.
-    jobs = _candidate_jobs(cursor)
+    #
+    # Bounding _candidate_jobs() to the requested window (rather than
+    # fetching every NewCrewing job ever, unbounded) matters for the same
+    # reason: confirmed live (2026-09-10) there are 4667 NewCrewing jobs
+    # total across HireTrack's history vs. ~80 in a typical current window,
+    # and the downstream Crew_header/CrewActivities bulk lookups below scale
+    # with however many candidate jobs come out of this function.
+    jobs = _candidate_jobs(cursor, window_start, window_end)
     job_nos = [j.JobNo for j in jobs]
 
     cursor.execute("SELECT Defcon_idx, Defcon_text, SortOrder FROM defcon")
@@ -137,7 +150,6 @@ def read_crew_list(cursor):
         {display_name(r.SURNAME, r.FORENAME) for r in cursor.fetchall() if (r.SURNAME or "").strip() or (r.FORENAME or "").strip()}
     )
 
-    today = date.today()
     result_jobs = []
     for j in jobs:
         header_ids = headers_by_job.get(j.JobNo, [])
@@ -151,18 +163,13 @@ def read_crew_list(cursor):
         # happen to match the base filter, and used to be silently dropped
         # by the old code's "if not phases: continue" - this restores that
         # without reintroducing the slow per-job query.
+        #
+        # Deliberately NOT also excluding jobs whose activity dates are
+        # entirely in the past relative to "today" - that used to be a
+        # filter here (removed 2026-09-10, see _candidate_jobs' docstring):
+        # the caller-supplied window is the only date-based filter now, so
+        # a window that includes a past date genuinely shows past jobs.
         if not header_ids or not all_dates:
-            continue
-        # Also skip jobs whose real crew schedule has already fully lapsed,
-        # even though the candidate-job SQL only filtered on JOBS."Due
-        # Back". Confirmed live (2026-08-31): "ТМ Основой 2025" (Р5562МСК)
-        # has Due Back = 2027-07-16 (still "open" by that field alone), but
-        # its actual CrewActivities max out at 2026-08-10 - every one of its
-        # 5460 activity rows is already in the past, zero today-or-future.
-        # HireTrack's own Due Back on a long-running job apparently isn't
-        # reliably closed out once real work stops, so it can't be trusted
-        # alone as "is there anything left to staff here".
-        if max(all_dates) < today:
             continue
         activity_start = min(all_dates)
         activity_end = max(all_dates)
@@ -443,6 +450,15 @@ def read_crew_candidates(cursor, crew_type_id, handler_id, crew_boss_id):
     return {"candidates": candidates}
 
 
+def _parse_date(value, field_name):
+    if not value:
+        raise ValueError(f"crew-data requires '{field_name}'")
+    try:
+        return date.fromisoformat(value)
+    except ValueError as error:
+        raise ValueError(f"Invalid '{field_name}': {value!r}") from error
+
+
 def main():
     request = json.load(sys.stdin)
     operation = request.get("operation")
@@ -457,7 +473,9 @@ def main():
     try:
         cursor = connection.cursor()
         if operation == "crew-data":
-            result = read_crew_list(cursor)
+            window_start = _parse_date(request.get("windowStart"), "windowStart")
+            window_end = _parse_date(request.get("windowEnd"), "windowEnd")
+            result = read_crew_list(cursor, window_start, window_end)
         elif operation == "crew-job-detail":
             result = read_job_detail(cursor, request.get("jobRef"))
         elif operation == "crew-candidates":
