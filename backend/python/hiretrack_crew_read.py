@@ -459,6 +459,170 @@ def _parse_date(value, field_name):
         raise ValueError(f"Invalid '{field_name}': {value!r}") from error
 
 
+# Eqlists/Sort statuses the vendor's own UI treats as "not really there"
+# (defcon: -2 Ignore, -1 Отмена, 0 Disregard) - lists/lines in these states
+# are left out of the equipment export.
+DEAD_DEFCON = (-2, -1, 0)
+
+
+def _in_chunks(cursor, sql_template, ids, extra_params=()):
+    # Small PK-lookup tables only (Hetype/category/FreeText) - chunked so a
+    # long item list never becomes one huge IN (...).
+    rows = []
+    ids = list(ids)
+    for i in range(0, len(ids), 200):
+        chunk = ids[i : i + 200]
+        cursor.execute(sql_template.format(ph=",".join("?" * len(chunk))), *extra_params, *chunk)
+        rows.extend(cursor.fetchall())
+    return rows
+
+
+def read_job_equipment(cursor, job_ref):
+    # Equipment list for ONE job, for the crew-bookings Excel export.
+    # Measured live (2026-10-12): "Sort WHERE Eqlno = ?" is ~12ms (Eqlno IS
+    # indexed), but the same lookup written as "Eqlno IN (...)" plus LEFT
+    # JOINs to Hetype/category/FreeText/EqSections took ~15s regardless of
+    # how many lines came back (planner falls back to a scan of the 200k-row
+    # Sort table). So: one plain "=" query per list, and item/category/
+    # section names resolved with separate small primary-key lookups here.
+    if not job_ref:
+        raise ValueError("crew-job-equipment requires 'jobRef'")
+
+    cursor.execute(
+        'SELECT JobNo, Job_Ref, Job_Title, Status, "Due Out", "Due Back", xCrewManager, Client, Venue '
+        "FROM JOBS WHERE Job_Ref = ?",
+        job_ref,
+    )
+    job = cursor.fetchone()
+    if not job:
+        raise ValueError(f"No job with Job_Ref = {job_ref!r}")
+
+    cursor.execute("SELECT Defcon_idx, Defcon_text FROM defcon")
+    defcon = {r.Defcon_idx: (r.Defcon_text or "").strip() for r in cursor.fetchall()}
+
+    manager = ""
+    if job.xCrewManager:
+        cursor.execute("SELECT SURNAME, FORENAME FROM Name2 WHERE NameCounter = ?", job.xCrewManager)
+        m = cursor.fetchone()
+        if m:
+            manager = display_name(m.SURNAME, m.FORENAME)
+    client = ""
+    if job.Client:
+        cursor.execute("SELECT CompanyName FROM Company WHERE CompanyCounter = ?", job.Client)
+        c = cursor.fetchone()
+        client = (c.CompanyName or "").strip() if c else ""
+    venue = ""
+    if job.Venue:
+        cursor.execute("SELECT VenueName FROM venue WHERE IDX = ?", job.Venue)
+        v = cursor.fetchone()
+        venue = (v.VenueName or "").strip() if v else ""
+
+    cursor.execute(
+        'SELECT Eql_no, Eql_Title, Eql_name, "DateOut", "DateBack", Defcon FROM Eqlists WHERE Job_no = ? ORDER BY Eql_no',
+        job.JobNo,
+    )
+    eqlists = [e for e in cursor.fetchall() if e.Defcon not in DEAD_DEFCON]
+
+    lines_by_list = {}
+    sections_by_list = {}
+    type_ids, cat_ids, free_ids = set(), set(), set()
+    for e in eqlists:
+        cursor.execute(
+            "SELECT Lineref, Type, Quant, ChargeQuantity, Xcat, Defcon, Virt, sectionID, xFreeText, SortOrder, "
+            "RecType, Notes, xSubhireEarmarkFor FROM Sort WHERE Eqlno = ?",
+            e.Eql_no,
+        )
+        kept = []
+        for s in cursor.fetchall():
+            # Same exclusions the vendor's own pick/prep queries use: virtual
+            # kit components, "composite prep modified" helper rows (17),
+            # subhire-earmark placeholders - plus cancelled lines.
+            if s.Virt or s.RecType == 17 or s.xSubhireEarmarkFor is not None or s.Defcon in DEAD_DEFCON:
+                continue
+            kept.append(s)
+            if s.Type is not None:
+                type_ids.add(s.Type)
+            if s.Xcat is not None:
+                cat_ids.add(s.Xcat)
+            if s.xFreeText:
+                free_ids.add(s.xFreeText)
+        lines_by_list[e.Eql_no] = kept
+        cursor.execute("SELECT idx, SectionText, sortOrder FROM EqSections WHERE xEqlno = ?", e.Eql_no)
+        sections_by_list[e.Eql_no] = {
+            r.idx: ((r.SectionText or "").strip(), r.sortOrder or 0) for r in cursor.fetchall()
+        }
+
+    type_names = {
+        r.Type: (r.Description or "").strip()
+        for r in _in_chunks(cursor, "SELECT Type, Description FROM Hetype WHERE Type IN ({ph})", type_ids)
+    }
+    cat_names = {
+        r.Category: (r.Description or "").strip()
+        for r in _in_chunks(cursor, "SELECT Category, Description FROM category WHERE Category IN ({ph})", cat_ids)
+    }
+    free_text = {
+        r.idx: (r.fText or "").strip()
+        for r in _in_chunks(cursor, "SELECT idx, fText FROM FreeText WHERE idx IN ({ph})", free_ids)
+    }
+
+    lists_out = []
+    for e in eqlists:
+        sections = sections_by_list[e.Eql_no]
+        grouped = {}
+        for s in lines_by_list[e.Eql_no]:
+            name = free_text.get(s.xFreeText, "") if s.RecType == 0 else type_names.get(s.Type, f"Type {s.Type}")
+            if not name:
+                continue
+            # Confirmed live (2026-10-12, job 5562): some normal lines have
+            # Quant = 0 but ChargeQuantity > 0 - they're on the quote (the
+            # physical count lives on kit components we skip as Virt), so
+            # fall back to the charged quantity rather than showing "0".
+            # Lines with neither are empty placeholders - dropped.
+            quantity = 0 if s.RecType == 0 else (s.Quant or s.ChargeQuantity or 0)
+            if s.RecType != 0 and quantity == 0:
+                continue
+            grouped.setdefault(s.sectionID, []).append(
+                {
+                    "sortOrder": s.SortOrder or 0,
+                    "name": name,
+                    "category": cat_names.get(s.Xcat, ""),
+                    "quantity": quantity,
+                    "notes": (s.Notes or "").strip(),
+                    "isFreeText": s.RecType == 0,
+                }
+            )
+        sections_out = []
+        for section_id, lines in sorted(
+            grouped.items(), key=lambda kv: sections.get(kv[0], ("", 0))[1]
+        ):
+            lines.sort(key=lambda l: l["sortOrder"])
+            sections_out.append({"title": sections.get(section_id, ("", 0))[0], "lines": lines})
+        lists_out.append(
+            {
+                "title": (e.Eql_Title or "").strip() or (e.Eql_name or "").strip(),
+                "reference": (e.Eql_name or "").strip(),
+                "status": defcon.get(e.Defcon, str(e.Defcon)),
+                "dateOut": e.DateOut.isoformat() if e.DateOut else None,
+                "dateBack": e.DateBack.isoformat() if e.DateBack else None,
+                "sections": sections_out,
+            }
+        )
+
+    return {
+        "job": {
+            "reference": (job.Job_Ref or "").strip(),
+            "title": (job.Job_Title or "").strip(),
+            "status": defcon.get(job.Status, str(job.Status)),
+            "dueOut": job[4].isoformat() if job[4] else None,
+            "dueBack": job[5].isoformat() if job[5] else None,
+            "crewBoss": manager,
+            "client": client,
+            "venue": venue,
+        },
+        "eqlists": lists_out,
+    }
+
+
 def main():
     request = json.load(sys.stdin)
     operation = request.get("operation")
@@ -478,6 +642,8 @@ def main():
             result = read_crew_list(cursor, window_start, window_end)
         elif operation == "crew-job-detail":
             result = read_job_detail(cursor, request.get("jobRef"))
+        elif operation == "crew-job-equipment":
+            result = read_job_equipment(cursor, request.get("jobRef"))
         elif operation == "crew-candidates":
             result = read_crew_candidates(
                 cursor, request.get("crewTypeId"), request.get("handlerId"), request.get("crewBossId")

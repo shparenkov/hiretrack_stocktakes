@@ -175,6 +175,13 @@ body { height: 100vh; display: flex; flex-direction: column; }
 .row.job.expanded .cell.toggle, .row.job.expanded .cell.col-job, .row.job.expanded .cell.col-name, .row.job.expanded .cell.col-crew { background: #f0f2fb; font-weight: 600; }
 
 .job-code { font-weight: 700; }
+.job-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.export-btn {
+  flex: 0 0 auto; margin-left: 6px; padding: 1px 6px; font-size: 11px; cursor: pointer;
+  border: 1px solid var(--green); color: var(--green); background: #fff; font-weight: 600;
+}
+.export-btn:hover { background: #eaf6ec; }
+.export-btn:disabled { opacity: 0.6; cursor: default; }
 .job-status { font-weight: 700; }
 .status-Подтверждено { color: var(--green); }
 .status-Бронь { color: #a15c00; }

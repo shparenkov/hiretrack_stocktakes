@@ -107,6 +107,45 @@ export interface CrewCandidatesResult {
   fetchedAt: string;
 }
 
+export interface CrewEquipmentLine {
+  name: string;
+  category: string;
+  // 0 for free-text lines (HireTrack stores no meaningful quantity there).
+  quantity: number;
+  notes: string;
+  isFreeText: boolean;
+}
+
+export interface CrewEquipmentSection {
+  title: string;
+  lines: CrewEquipmentLine[];
+}
+
+export interface CrewEquipmentList {
+  title: string;
+  reference: string;
+  status: string;
+  dateOut: string | null;
+  dateBack: string | null;
+  sections: CrewEquipmentSection[];
+}
+
+// Equipment lists for one job - backs the Excel export button on each job
+// row (see crew-equipment-xlsx.ts).
+export interface CrewJobEquipment {
+  job: {
+    reference: string;
+    title: string;
+    status: string;
+    dueOut: string | null;
+    dueBack: string | null;
+    crewBoss: string;
+    client: string;
+    venue: string;
+  };
+  eqlists: CrewEquipmentList[];
+}
+
 function resolveBridgePath() {
   return path.resolve(process.cwd(), 'backend', 'python', 'hiretrack_crew_read.py');
 }
@@ -249,6 +288,12 @@ export async function getCrewBookingsData(options: {
 export async function getCrewJobDetail(jobRef: string): Promise<CrewJobDetail> {
   const raw = await runCrewOdbcRead<Omit<CrewJobDetail, 'fetchedAt'>>({ operation: 'crew-job-detail', jobRef });
   return { ...raw, fetchedAt: new Date().toISOString() };
+}
+
+// Uncached, same reasoning as getCrewJobDetail - one job's lists, ~0.5-1.5s
+// live, and an export should always reflect the list as it is right now.
+export async function getCrewJobEquipment(jobRef: string): Promise<CrewJobEquipment> {
+  return runCrewOdbcRead<CrewJobEquipment>({ operation: 'crew-job-equipment', jobRef });
 }
 
 // Deliberately uncached, same reasoning as getCrewJobDetail - scoped to the

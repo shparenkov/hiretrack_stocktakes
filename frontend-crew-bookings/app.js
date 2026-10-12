@@ -69,6 +69,7 @@ const state = {
   statusAndAbove: true, // false = exact match, true = >= statusFilter
   searchQuery: "", // text currently being typed, not yet pinned
   searchTerms: [], // pinned search terms (Enter in the search box) - see commitSearchTerm()
+  exportPending: new Set(), // job ids with an equipment Excel export in flight (survives re-renders)
   groupBy: "none",
   assignErrors: new Map(), // key: `${jobId}::${phaseIdx}::${posIdx}` -> message
   // Non-blocking "this person is already booked elsewhere" heads-up from
@@ -225,7 +226,13 @@ function renderJobRow(job) {
     <div class="cell col-job">
       <span class="job-code">${job.id}</span> <span class="job-status ${statusClass}">[${job.status}]</span>
     </div>
-    <div class="cell col-name">${job.name}</div>
+    <div class="cell col-name">
+      <span class="job-name">${job.name}</span>
+      <button type="button" class="export-btn" data-action="export-equipment" data-job="${job.id}"
+        title="Выгрузить список оборудования по работе в Excel"${state.exportPending.has(job.id) ? " disabled" : ""}>${
+          state.exportPending.has(job.id) ? "…" : "&#8681; XLS"
+        }</button>
+    </div>
     <div class="cell col-crew">${job.crewBoss}</div>
     <div class="bar-track">
       ${barHtml}
@@ -706,6 +713,38 @@ function collapseJob(jobId) {
   }
 }
 
+// Equipment list for one job as an Excel file. Fetched as a blob (not a
+// plain link) so a failure shows a message instead of a broken download,
+// and the in-flight state lives in state.exportPending because the grid
+// re-renders itself (list refresh, background prefetch) while this runs.
+async function exportJobEquipment(btn) {
+  const jobId = btn.dataset.job;
+  if (state.exportPending.has(jobId)) return;
+  state.exportPending.add(jobId);
+  render();
+  try {
+    const resp = await fetch(`/api/crew-bookings/job-equipment.xlsx?jobRef=${encodeURIComponent(jobId)}`);
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      throw new Error(text || `HTTP ${resp.status}`);
+    }
+    const url = URL.createObjectURL(await resp.blob());
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `equipment-${jobId}.xlsx`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  } catch (e) {
+    console.error(e);
+    alert("Не удалось выгрузить список оборудования: " + e.message);
+  } finally {
+    state.exportPending.delete(jobId);
+    render();
+  }
+}
+
 document.getElementById("gantt").addEventListener("click", (ev) => {
   const btn = ev.target.closest("[data-action]");
   if (!btn) return;
@@ -717,6 +756,8 @@ document.getElementById("gantt").addEventListener("click", (ev) => {
     } else {
       expandJob(id);
     }
+  } else if (btn.dataset.action === "export-equipment") {
+    exportJobEquipment(btn);
   } else if (btn.dataset.action === "toggle-phase") {
     const key = `${btn.dataset.job}::${btn.dataset.phase}`;
     if (state.expandedPhases.has(key)) state.expandedPhases.delete(key);
@@ -1467,6 +1508,11 @@ const HELP_SECTIONS = [
     items: [
       { term: "+ / −", desc: "Разворачивает/сворачивает работу до фаз и позиций. При разворачивании подгружается детальная информация по этой работе и дальше сама обновляется каждые ~25 сек, пока строка раскрыта." },
       { term: "Цветной бар в строке работы", desc: "Показывает реальный диапазон дат по crew-активности (Crew_header/CrewActivities), а не Due Out/Due Back самой работы — эти поля в HireTrack не всегда совпадают с фактическим графиком." },
+      {
+        term: "⇩ XLS (в строке работы, справа от названия)",
+        desc:
+          "Выгружает в Excel список оборудования по этой работе: шапка (работа, клиент, площадка, даты, Crew Boss, статус), затем каждый список оборудования отдельным блоком — по разделам, с категорией, количеством и примечаниями, и итогом по списку. Данные берутся из HireTrack на момент нажатия (~1–2 сек). Отменённые списки и строки не включаются; позиции, у которых в HireTrack физическое количество пустое, показываются с количеством из сметы.",
+      },
       {
         term: "Цифры на баре (счётчик смен по дням)",
         desc:

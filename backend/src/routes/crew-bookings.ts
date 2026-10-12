@@ -1,6 +1,12 @@
 import { Request, Response, Router } from 'express';
 import { z } from 'zod';
-import { getCrewBookingsData, getCrewCandidates, getCrewJobDetail } from '../services/hiretrack-crew-read';
+import {
+  getCrewBookingsData,
+  getCrewCandidates,
+  getCrewJobDetail,
+  getCrewJobEquipment,
+} from '../services/hiretrack-crew-read';
+import { renderCrewEquipmentXlsx } from '../services/crew-equipment-xlsx';
 import {
   assignCrewPosition,
   setCrewRoleNote,
@@ -87,6 +93,31 @@ crewBookingsRouter.get('/job-detail', async (req: Request, res: Response) => {
   try {
     const data = await getCrewJobDetail(jobRef);
     res.json(data);
+  } catch (error) {
+    res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// Excel export of one job's equipment lists - see crew-equipment-xlsx.ts.
+crewBookingsRouter.get('/job-equipment.xlsx', async (req: Request, res: Response) => {
+  const jobRef = typeof req.query.jobRef === 'string' ? req.query.jobRef : '';
+  if (!jobRef) {
+    res.status(400).json({ error: "'jobRef' query param is required" });
+    return;
+  }
+  try {
+    const data = await getCrewJobEquipment(jobRef);
+    const xlsx = await renderCrewEquipmentXlsx(data);
+    // Job refs are Cyrillic - RFC 5987 filename* for the real name, plain
+    // ASCII fallback for clients that ignore it.
+    const filename = `equipment-${data.job.reference}.xlsx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="equipment.xlsx"; filename*=UTF-8''${encodeURIComponent(filename)}`
+    );
+    res.setHeader('Content-Length', String(xlsx.length));
+    res.send(xlsx);
   } catch (error) {
     res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
   }
