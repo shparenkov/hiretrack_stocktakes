@@ -728,10 +728,22 @@ async function exportJobEquipment(btn) {
       const text = await resp.text().catch(() => "");
       throw new Error(text || `HTTP ${resp.status}`);
     }
+    // The server names the file ("Список оборудования - <работа> - <название>
+    // - <дата время>.xlsx") in the RFC 5987 filename* part of Content-Disposition.
+    const disposition = resp.headers.get("Content-Disposition") || "";
+    const encodedName = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
+    let fileName = `Список оборудования - ${jobId}.xlsx`;
+    if (encodedName) {
+      try {
+        fileName = decodeURIComponent(encodedName[1]);
+      } catch (e) {
+        // malformed header - keep the fallback name
+      }
+    }
     const url = URL.createObjectURL(await resp.blob());
     const link = document.createElement("a");
     link.href = url;
-    link.download = `equipment-${jobId}.xlsx`;
+    link.download = fileName;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -1511,7 +1523,7 @@ const HELP_SECTIONS = [
       {
         term: "⇩ XLS (в строке работы, справа от названия)",
         desc:
-          "Выгружает в Excel список оборудования по этой работе: шапка (работа, клиент, площадка, даты, Crew Boss, статус), затем каждый список оборудования отдельным блоком — по разделам, с категорией, количеством и примечаниями, и итогом по списку. Данные берутся из HireTrack на момент нажатия (~1–2 сек). Отменённые списки и строки не включаются; позиции, у которых в HireTrack физическое количество пустое, показываются с количеством из сметы.",
+          "Выгружает в Excel список оборудования по этой работе: шапка (работа, клиент, площадка, даты, Crew Boss, статус), затем каждый список оборудования отдельным блоком — по разделам, с категорией, количеством и примечаниями, и итогом по списку. Файл называется «Список оборудования - номер работы - название работы - дата и время формирования». Данные берутся из HireTrack на момент нажатия (~1–2 сек). Отменённые списки и строки не включаются; позиции, у которых в HireTrack физическое количество пустое, показываются с количеством из сметы.",
       },
       {
         term: "Цифры на баре (счётчик смен по дням)",

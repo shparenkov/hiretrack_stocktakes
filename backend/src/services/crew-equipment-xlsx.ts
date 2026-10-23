@@ -34,6 +34,28 @@ function formatDateTime(iso: string | null): string {
   return hh && mm && !(hh === '00' && mm === '00') ? `${date} ${hh}:${mm}` : date;
 }
 
+// Downloaded file name: "Список оборудования - <job ref> - <job name> - <dd.mm.yyyy hh-mm>.xlsx".
+// Windows forbids \ / : * ? " < > | in file names (and a ":" in the time
+// would be one of them, hence "hh-mm"), so job-supplied text is sanitized
+// and the job name is capped to keep the full path reasonable.
+function safeFileNamePart(text: string, maxLength: number): string {
+  return text
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength)
+    .trim()
+    .replace(/[. ]+$/, '');
+}
+
+export function crewEquipmentFileName(job: { reference: string; title: string }, generatedAt: Date): string {
+  const stamp =
+    `${pad(generatedAt.getDate())}.${pad(generatedAt.getMonth() + 1)}.${generatedAt.getFullYear()} ` +
+    `${pad(generatedAt.getHours())}-${pad(generatedAt.getMinutes())}`;
+  const parts = ['Список оборудования', safeFileNamePart(job.reference, 30), safeFileNamePart(job.title, 80), stamp];
+  return `${parts.filter(Boolean).join(' - ')}.xlsx`;
+}
+
 function mergedRow(sheet: ExcelJS.Worksheet, rowNumber: number): ExcelJS.Row {
   sheet.mergeCells(rowNumber, 1, rowNumber, LAST_COLUMN);
   return sheet.getRow(rowNumber);

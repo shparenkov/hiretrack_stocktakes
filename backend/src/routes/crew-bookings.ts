@@ -6,7 +6,7 @@ import {
   getCrewJobDetail,
   getCrewJobEquipment,
 } from '../services/hiretrack-crew-read';
-import { renderCrewEquipmentXlsx } from '../services/crew-equipment-xlsx';
+import { crewEquipmentFileName, renderCrewEquipmentXlsx } from '../services/crew-equipment-xlsx';
 import {
   assignCrewPosition,
   setCrewRoleNote,
@@ -107,15 +107,20 @@ crewBookingsRouter.get('/job-equipment.xlsx', async (req: Request, res: Response
   }
   try {
     const data = await getCrewJobEquipment(jobRef);
-    const xlsx = await renderCrewEquipmentXlsx(data);
-    // Job refs are Cyrillic - RFC 5987 filename* for the real name, plain
-    // ASCII fallback for clients that ignore it.
-    const filename = `equipment-${data.job.reference}.xlsx`;
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="equipment.xlsx"; filename*=UTF-8''${encodeURIComponent(filename)}`
+    // One timestamp for both the file name and the "Выгружено" line inside.
+    const generatedAt = new Date();
+    const xlsx = await renderCrewEquipmentXlsx(data, generatedAt);
+    // The name is Cyrillic - RFC 5987 filename* carries the real one (the
+    // frontend reads it back from this header), plain ASCII fallback for
+    // clients that ignore it. encodeURIComponent leaves ' ( ) * alone, which
+    // RFC 5987 does not allow unescaped.
+    const filename = crewEquipmentFileName(data.job, generatedAt);
+    const encodedName = encodeURIComponent(filename).replace(
+      /['()*]/g,
+      (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`
     );
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="equipment.xlsx"; filename*=UTF-8''${encodedName}`);
     res.setHeader('Content-Length', String(xlsx.length));
     res.send(xlsx);
   } catch (error) {
