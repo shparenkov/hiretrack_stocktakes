@@ -2,6 +2,7 @@ import cors from 'cors';
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
+import { clientLinksRouter } from './routes/client-links';
 import { crewBookingsRouter } from './routes/crew-bookings';
 import { ticketsRouter } from './routes/tickets';
 import { installCrewBookingsPinAuth } from './services/crew-bookings-pin-auth';
@@ -51,6 +52,13 @@ export function createApp() {
     res.sendFile(path.join(crewBookingsFrontendPath, 'index.html'));
   });
   app.use('/crew-bookings', express.static(crewBookingsFrontendPath, { index: false, redirect: false }));
+
+  app.use('/api/client-links', clientLinksRouter);
+  const clientLinksFrontendPath = path.resolve(process.cwd(), 'frontend-client-links');
+  app.get('/client-links/', (_req, res) => {
+    res.sendFile(path.join(clientLinksFrontendPath, 'index.html'));
+  });
+  app.use('/client-links', express.static(clientLinksFrontendPath, { index: false, redirect: false }));
 
   app.all(['/bitrix/tickets/app', '/bitrix/tickets/install'], (_req, res) => {
     const uiPath = '/bitrix/tickets/ui/';

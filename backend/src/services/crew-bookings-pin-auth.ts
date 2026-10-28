@@ -13,6 +13,15 @@ const DEFAULT_SESSION_DAYS = 30;
 const FAILURE_WINDOW_MS = 15 * 60 * 1000;
 const MAX_FAILURES = 5;
 const PIN_PATH = '/crew-bookings/pin';
+const CLIENT_LINKS_PATH = '/client-links/';
+
+// The same PIN also guards the client-links matching page (it exposes the
+// whole client list and would later feed what lands in Bitrix deals). After
+// entering the PIN the user goes back to whichever gated page sent them
+// here; only these two known destinations are honoured.
+function safeNext(value: unknown): string {
+  return value === CLIENT_LINKS_PATH ? CLIENT_LINKS_PATH : '/crew-bookings/';
+}
 
 function sessionTtlMs(): number {
   const configuredDays = Number(process.env.CREW_BOOKINGS_PIN_SESSION_DAYS || DEFAULT_SESSION_DAYS);
@@ -64,7 +73,7 @@ function isHttps(req: Request): boolean {
   return req.secure || req.get('x-forwarded-proto')?.split(',')[0].trim() === 'https';
 }
 
-function pinPage(errorMessage = ''): string {
+function pinPage(errorMessage = '', next = '/crew-bookings/'): string {
   const error = errorMessage ? `<p class="error">${errorMessage}</p>` : '';
   return `<!doctype html>
 <html lang="ru">
@@ -93,6 +102,7 @@ function pinPage(errorMessage = ''): string {
   <main>
     <header><h1>Crew Bookings</h1><p>Введите PIN-код доступа</p></header>
     <form method="post" action="${PIN_PATH}">
+      <input type="hidden" name="next" value="${next}">
       ${error}
       <label for="pin">PIN</label>
       <input id="pin" name="pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="off" required autofocus>
@@ -109,8 +119,9 @@ export function installCrewBookingsPinAuth(app: import('express').Express): void
   const failures = new Map<string, { count: number; resetAt: number }>();
 
   app.get(PIN_PATH, (req, res) => {
-    if (hasValidPinSession(req, pin)) return res.redirect('/crew-bookings/');
-    return res.type('html').send(pinPage());
+    const next = safeNext(req.query.next);
+    if (hasValidPinSession(req, pin)) return res.redirect(next);
+    return res.type('html').send(pinPage('', next));
   });
 
   app.post(PIN_PATH, (req, res) => {
@@ -122,9 +133,10 @@ export function installCrewBookingsPinAuth(app: import('express').Express): void
       }
       if (failures.size > 2000) failures.delete(failures.keys().next().value as string);
     }
+    const next = safeNext(req.body?.next);
     const record = failures.get(key);
     if (record && record.resetAt > now && record.count >= MAX_FAILURES) {
-      return res.status(429).type('html').send(pinPage('Слишком много попыток. Повторите через 15 минут.'));
+      return res.status(429).type('html').send(pinPage('Слишком много попыток. Повторите через 15 минут.', next));
     }
 
     const suppliedPin = typeof req.body?.pin === 'string' ? req.body.pin.trim() : '';
@@ -132,7 +144,7 @@ export function installCrewBookingsPinAuth(app: import('express').Express): void
       failures.set(key, record && record.resetAt > now
         ? { count: record.count + 1, resetAt: record.resetAt }
         : { count: 1, resetAt: now + FAILURE_WINDOW_MS });
-      return res.status(401).type('html').send(pinPage('Неверный PIN.'));
+      return res.status(401).type('html').send(pinPage('Неверный PIN.', next));
     }
 
     failures.delete(key);
@@ -143,16 +155,20 @@ export function installCrewBookingsPinAuth(app: import('express').Express): void
       'Set-Cookie',
       `${COOKIE_NAME}=${token}; Path=/; Max-Age=${sessionDurationMs / 1000}; HttpOnly; SameSite=Lax${secure}`
     );
-    return res.redirect('/crew-bookings/');
+    return res.redirect(next);
   });
 
   app.use((req: Request, res: Response, next: NextFunction) => {
-    const gated = req.path.startsWith('/crew-bookings') || req.path.startsWith('/api/crew-bookings');
+    const gated =
+      req.path.startsWith('/crew-bookings') ||
+      req.path.startsWith('/api/crew-bookings') ||
+      req.path.startsWith('/client-links') ||
+      req.path.startsWith('/api/client-links');
     if (!gated || req.path === PIN_PATH) return next();
     if (hasValidPinSession(req, pin)) return next();
-    if (req.path.startsWith('/api/crew-bookings')) {
+    if (req.path.startsWith('/api/')) {
       return res.status(401).json({ error: 'pin_required' });
     }
-    return res.redirect(PIN_PATH);
+    return res.redirect(req.path.startsWith('/client-links') ? `${PIN_PATH}?next=${CLIENT_LINKS_PATH}` : PIN_PATH);
   });
 }

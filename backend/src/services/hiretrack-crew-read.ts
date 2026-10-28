@@ -296,6 +296,32 @@ export async function getCrewJobEquipment(jobRef: string): Promise<CrewJobEquipm
   return runCrewOdbcRead<CrewJobEquipment>({ operation: 'crew-job-equipment', jobRef });
 }
 
+// HireTrack companies used on at least one job as client / venue / payer,
+// with per-role job counts - backs the client-links matching page. Cached a
+// few minutes: three GROUP BYs on JOBS plus the Company table, and the
+// underlying data changes slowly.
+export interface LinkableCompany {
+  id: number;
+  name: string;
+  town: string;
+  phone: string;
+  email: string;
+  archived: boolean;
+  jobs: { client: number; venue: number; payer: number };
+}
+
+let linkableCompaniesCache: { at: number; data: LinkableCompany[] } | null = null;
+
+export async function getLinkableCompanies(forceRefresh = false): Promise<LinkableCompany[]> {
+  const now = Date.now();
+  if (!forceRefresh && linkableCompaniesCache && now - linkableCompaniesCache.at < 5 * 60_000) {
+    return linkableCompaniesCache.data;
+  }
+  const data = await runCrewOdbcRead<LinkableCompany[]>({ operation: 'linkable-companies' });
+  linkableCompaniesCache = { at: now, data };
+  return data;
+}
+
 // Deliberately uncached, same reasoning as getCrewJobDetail - scoped to the
 // ~100-person active roster, fast enough to always hit live.
 export async function getCrewCandidates(params: {

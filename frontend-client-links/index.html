@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Клиенты HireTrack ↔ Заказчики Битрикса</title>
+  <link rel="stylesheet" href="styles.css?v=1">
+</head>
+<body>
+  <header class="top">
+    <div>
+      <h1>Клиенты HireTrack ↔ Заказчики Битрикса</h1>
+      <p id="summary" class="top-sub">Загрузка…</p>
+    </div>
+    <div class="top-actions">
+      <button id="helpBtn" type="button" class="ghost">Справка</button>
+      <button id="refreshBtn" type="button" class="ghost">Обновить данные</button>
+    </div>
+  </header>
+  <div id="banner" class="banner" hidden></div>
+  <main class="layout">
+    <section class="pane left">
+      <div class="toolbar">
+        <input id="search" type="search" placeholder="Поиск по клиентам HireTrack" autocomplete="off">
+        <div class="row2">
+          <select id="statusFilter" aria-label="Фильтр по статусу">
+            <option value="open">Не сопоставлены</option>
+            <option value="all">Все</option>
+            <option value="linked">Связаны</option>
+            <option value="none">Без компании</option>
+          </select>
+          <select id="roleFilter" aria-label="Фильтр по роли в работе">
+            <option value="any">Любая роль</option>
+            <option value="client">Клиент</option>
+            <option value="venue">Площадка</option>
+            <option value="payer">Плательщик</option>
+          </select>
+        </div>
+      </div>
+      <div id="list" class="list" role="listbox" aria-label="Клиенты HireTrack"></div>
+    </section>
+    <section class="pane right" id="detail"></section>
+  </main>
+  <div id="helpModal" class="modal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+      <div class="modal-head"><h2 id="helpTitle">Как пользоваться страницей</h2><button id="helpClose" type="button" class="ghost">Закрыть</button></div>
+      <div id="helpBody" class="modal-body"></div>
+    </div>
+  </div>
+  <script src="app.js?v=2"></script>
+</body>
+</html>

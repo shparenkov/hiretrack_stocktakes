@@ -623,6 +623,45 @@ def read_job_equipment(cursor, job_ref):
     }
 
 
+def read_linkable_companies(cursor):
+    # Backs the client-links page (Bitrix "Заказчики" <-> HireTrack Company
+    # matching). One row per HireTrack company that appears on at least one
+    # job as client / venue / payer (JOBS.Client / JOBS.Venue /
+    # JOBS.xTaxAddress - payer lives in xTaxAddress, see the Bitrix
+    # connector's field_map.js), with job counts per role. Three cheap
+    # GROUP BYs on JOBS (measured fast) instead of one join.
+    counts = {"client": {}, "venue": {}, "payer": {}}
+    for role, column in (("client", "Client"), ("venue", "Venue"), ("payer", "xTaxAddress")):
+        cursor.execute(f'SELECT "{column}", COUNT(*) FROM JOBS GROUP BY "{column}"')
+        for company_id, count in cursor.fetchall():
+            if company_id is not None:
+                counts[role][int(company_id)] = int(count)
+    used = set()
+    for role_counts in counts.values():
+        used.update(role_counts)
+    cursor.execute(
+        'SELECT CompanyCounter, CompanyName, Town, MainTelephone, EmailAddress, Archived FROM Company'
+    )
+    companies = []
+    for row in cursor.fetchall():
+        company_id = int(row[0])
+        if company_id not in used:
+            continue
+        companies.append(
+            {
+                "id": company_id,
+                "name": (row[1] or "").strip(),
+                "town": (row[2] or "").strip(),
+                "phone": (row[3] or "").strip(),
+                "email": (row[4] or "").strip(),
+                "archived": bool(row[5]),
+                "jobs": {role: counts[role].get(company_id, 0) for role in counts},
+            }
+        )
+    companies.sort(key=lambda c: -(c["jobs"]["client"] + c["jobs"]["venue"] + c["jobs"]["payer"]))
+    return companies
+
+
 def main():
     request = json.load(sys.stdin)
     operation = request.get("operation")
@@ -642,6 +681,8 @@ def main():
             result = read_crew_list(cursor, window_start, window_end)
         elif operation == "crew-job-detail":
             result = read_job_detail(cursor, request.get("jobRef"))
+        elif operation == "linkable-companies":
+            result = read_linkable_companies(cursor)
         elif operation == "crew-job-equipment":
             result = read_job_equipment(cursor, request.get("jobRef"))
         elif operation == "crew-candidates":

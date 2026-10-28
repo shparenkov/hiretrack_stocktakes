@@ -57,6 +57,11 @@ export function renderHiretrackPortalPage(): string {
         <div class="section-body"><h2>Назначение персонала</h2><p>Job → Фаза → Позиция с назначением людей прямо из HireTrack NX.</p><div class="facts"><span>Job/фаза/позиция по дням</span><span>Поиск и подтверждение назначения</span><span>Пишет напрямую в HireTrack</span></div></div>
         <span class="open">Открыть Crew Bookings →</span>
       </a>
+      <a class="section" href="/client-links/">
+        <div class="section-head"><strong>Client Links</strong><span class="code">BITRIX</span></div>
+        <div class="section-body"><h2>Клиенты и Битрикс</h2><p>Сопоставление клиентов HireTrack с заказчиками Битрикса для сделок.</p><div class="facts"><span>Клиент, площадка, плательщик</span><span>Несколько юрлиц на клиента</span><span>Ничего не пишет в HireTrack и Битрикс</span></div></div>
+        <span class="open">Открыть сопоставление →</span>
+      </a>
     </div>
   </main>
 </body>
