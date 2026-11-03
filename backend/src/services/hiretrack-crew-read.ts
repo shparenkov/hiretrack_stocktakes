@@ -109,6 +109,9 @@ export interface CrewCandidatesResult {
 
 export interface CrewEquipmentLine {
   name: string;
+  // NOMINAL.NominalDescription of the item's default nominal (e.g.
+  // "Барабанное оборудование"); "" for free-text lines and items without one.
+  nominalDescription: string;
   category: string;
   // 0 for free-text lines (HireTrack stores no meaningful quantity there).
   quantity: number;

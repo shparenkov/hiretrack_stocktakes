@@ -552,10 +552,17 @@ def read_job_equipment(cursor, job_ref):
             r.idx: ((r.SectionText or "").strip(), r.sortOrder or 0) for r in cursor.fetchall()
         }
 
-    type_names = {
-        r.Type: (r.Description or "").strip()
-        for r in _in_chunks(cursor, "SELECT Type, Description FROM Hetype WHERE Type IN ({ph})", type_ids)
+    type_rows = _in_chunks(cursor, "SELECT Type, Description, DefNominal FROM Hetype WHERE Type IN ({ph})", type_ids)
+    type_names = {r.Type: (r.Description or "").strip() for r in type_rows}
+    # The item's default nominal doubles as its equipment group in this
+    # database (code "05" = "Барабанное оборудование", "07" = radio, ...). The
+    # export shows the nominal's description, not the bare code.
+    nominal_ids = {r.DefNominal for r in type_rows if r.DefNominal}
+    nominal_descriptions = {
+        r.IDX: (r.NominalDescription or "").strip()
+        for r in _in_chunks(cursor, "SELECT IDX, NominalDescription FROM NOMINAL WHERE IDX IN ({ph})", nominal_ids)
     }
+    type_nominal = {r.Type: nominal_descriptions.get(r.DefNominal, "") for r in type_rows}
     cat_names = {
         r.Category: (r.Description or "").strip()
         for r in _in_chunks(cursor, "SELECT Category, Description FROM category WHERE Category IN ({ph})", cat_ids)
@@ -585,6 +592,7 @@ def read_job_equipment(cursor, job_ref):
                 {
                     "sortOrder": s.SortOrder or 0,
                     "name": name,
+                    "nominalDescription": "" if s.RecType == 0 else type_nominal.get(s.Type, ""),
                     "category": cat_names.get(s.Xcat, ""),
                     "quantity": quantity,
                     "notes": (s.Notes or "").strip(),
@@ -631,11 +639,20 @@ def read_linkable_companies(cursor):
     # connector's field_map.js), with job counts per role. Three cheap
     # GROUP BYs on JOBS (measured fast) instead of one join.
     counts = {"client": {}, "venue": {}, "payer": {}}
-    for role, column in (("client", "Client"), ("venue", "Venue"), ("payer", "xTaxAddress")):
-        cursor.execute(f'SELECT "{column}", COUNT(*) FROM JOBS GROUP BY "{column}"')
+    queries = (
+        ("client", 'SELECT "Client", COUNT(*) FROM JOBS GROUP BY "Client"'),
+        ("venue", 'SELECT "Venue", COUNT(*) FROM JOBS GROUP BY "Venue"'),
+        # Venue follows the Bitrix connector's rule (2026-10-31): JOBS.Venue
+        # when set, otherwise HireTrack's auto-filled xMainVenue.
+        ("venue", 'SELECT "xMainVenue", COUNT(*) FROM JOBS WHERE "Venue" IS NULL GROUP BY "xMainVenue"'),
+        ("payer", 'SELECT "xTaxAddress", COUNT(*) FROM JOBS GROUP BY "xTaxAddress"'),
+    )
+    for role, sql in queries:
+        cursor.execute(sql)
         for company_id, count in cursor.fetchall():
             if company_id is not None:
-                counts[role][int(company_id)] = int(count)
+                key = int(company_id)
+                counts[role][key] = counts[role].get(key, 0) + int(count)
     used = set()
     for role_counts in counts.values():
         used.update(role_counts)

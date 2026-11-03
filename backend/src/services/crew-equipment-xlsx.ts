@@ -162,7 +162,7 @@ export async function renderCrewEquipmentXlsx(data: CrewJobEquipment, generatedA
         if (!line.isFreeText) totalQuantity += line.quantity;
         const row = sheet.getRow(rowNumber);
         row.getCell(1).value = lineNumber;
-        row.getCell(2).value = line.name;
+        row.getCell(2).value = [line.nominalDescription, line.name].filter(Boolean).join(' ');
         row.getCell(3).value = line.category;
         row.getCell(4).value = line.isFreeText ? null : line.quantity;
         row.getCell(5).value = line.notes;
