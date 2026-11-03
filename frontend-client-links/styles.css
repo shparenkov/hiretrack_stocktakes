@@ -32,6 +32,11 @@ textarea { height: 56px; padding: 7px 9px; width: 100%; resize: vertical; }
 .top h1 { margin: 0; font-size: 18px; font-weight: 600; }
 .top-sub { margin: 4px 0 0; font-size: 12px; color: #ecdcf5; }
 .top-actions { display: flex; gap: 8px; }
+.top-actions button.sync { background: #fff; border-color: #fff; color: var(--purple-dark); font-weight: 600; }
+.top-actions button.sync:hover { background: var(--purple-tint); }
+.top-actions button.sync:disabled { opacity: .7; cursor: default; }
+.sync-info:empty { display: none; }
+.sync-info.pending { color: #ffe3a3; }
 .banner { margin: 10px 18px 0; padding: 9px 12px; background: var(--warn-bg); color: var(--warn); border: 1px solid #e6c987; border-radius: 4px; }
 
 .layout { display: grid; grid-template-columns: minmax(280px, 5fr) minmax(0, 7fr); gap: 12px; padding: 12px 18px 24px; align-items: start; }

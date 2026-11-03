@@ -2,7 +2,8 @@
 
 // Sandbox for matching HireTrack companies (client / venue / payer of a job)
 // with the Bitrix24 "Заказчики" synced from 1C. Every click saves straight to
-// the server's staging file; nothing is written to HireTrack or Bitrix here.
+// the server's staging file. The only thing that reaches Bitrix is the explicit
+// "sync with deals" button, which runs the connector's resync on the server.
 
 const state = {
   companies: [],
@@ -28,7 +29,8 @@ const HELP = [
   ['Поиск заказчика', 'Ищет по названию, ИНН и названиям из реквизитов (в том числе ФИО предпринимателя). Для клиентов-физлиц, которые работают через ИП или компанию, подсказки по названию не помогают, находите нужное юрлицо поиском.'],
   ['Несколько юрлиц', 'К одной компании HireTrack можно добавить несколько юрлиц. Отметка «по умолчанию» выбирает то, которое попадёт в сделку. Разные компании HireTrack могут вести на одного и того же заказчика.'],
   ['Без компании', 'Для клиентов без юрлица: сделка создаётся без компании. Решение можно отменить кнопкой «Сбросить».'],
-  ['Что сохраняется', 'Все решения хранятся на сервере в отдельном файле. В Битрикс и в HireTrack эта страница ничего не пишет.'],
+  ['Что сохраняется', 'Все решения хранятся на сервере в отдельном файле. Сами по себе они ни в Битрикс, ни в HireTrack не пишутся.'],
+  ['Синхронизация со сделками', 'Новые сделки берут связи автоматически. Уже созданные сделки обновляются раз в сутки в 05:00, если связи менялись. Кнопка «Синхронизировать со сделками» делает то же самое сразу: пересчитывает поля «Клиент», «Площадка» и «Плательщик» во всех сделках воронки Hiretrack и записывает отличия в Битрикс. Компанию в поле «Клиент», которую менеджер выбрал вручную, она не меняет. Занимает несколько минут, страницу можно не закрывать или открыть заново: статус сохранится.'],
 ];
 
 // ---------- text normalisation / similarity ----------
@@ -375,6 +377,90 @@ document.addEventListener('input', (event) => {
   }
 });
 
+// ---------- sync with existing Bitrix deals ----------
+
+const sync = { status: null, timer: null, watching: false };
+
+function fmtTime(iso) {
+  return new Date(iso).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+function countsText(counts) {
+  return `проверено сделок ${counts.checked}, обновлено ${counts.updated}, пропущено ${counts.skipped}`;
+}
+
+function renderSync() {
+  const s = sync.status;
+  if (!s) return;
+  const btn = $('syncBtn');
+  const info = $('syncInfo');
+  btn.disabled = s.running || !s.available;
+  btn.textContent = s.running ? 'Синхронизация…' : 'Синхронизировать со сделками';
+  info.classList.remove('pending');
+  if (!s.available) {
+    info.textContent = 'Синхронизация недоступна: на сервере не найден коннектор.';
+    return;
+  }
+  if (s.running) {
+    info.textContent = 'Идёт синхронизация со сделками, это может занять несколько минут…';
+    return;
+  }
+  const parts = [s.lastSyncedAt ? `Последняя синхронизация: ${fmtTime(s.lastSyncedAt)}` : 'Синхронизаций ещё не было'];
+  if (s.pendingChanges) {
+    parts.push('есть связи, которых нет в сделках (ночью применятся сами)');
+    info.classList.add('pending');
+  }
+  if (s.last && s.last.ok === false && (!s.lastSyncedAt || s.last.finishedAt > s.lastSyncedAt)) {
+    parts.push(`последняя попытка не удалась: ${s.last.summary || 'неизвестная ошибка'}`);
+    info.classList.add('pending');
+  }
+  info.textContent = parts.join(' · ');
+}
+
+async function refreshSync() {
+  try {
+    sync.status = await api('GET', '/api/client-links/sync/status');
+  } catch (error) {
+    if (error.message === 'pin_required') return;
+    $('syncInfo').textContent = `Статус синхронизации недоступен: ${error.message}`;
+    return;
+  }
+  renderSync();
+  if (sync.status.running && !sync.watching) watchSync();
+}
+
+// Poll while a run is in progress (also when the page was opened mid-run).
+function watchSync() {
+  sync.watching = true;
+  clearTimeout(sync.timer);
+  sync.timer = setTimeout(async () => {
+    await refreshSync();
+    if (sync.status && sync.status.running) {
+      watchSync();
+      return;
+    }
+    sync.watching = false;
+    const last = sync.status && sync.status.last;
+    if (last && last.ok) {
+      toast(last.counts ? `Готово: ${countsText(last.counts)}` : 'Синхронизация завершена');
+    } else if (last) {
+      toast(`Синхронизация не удалась: ${last.summary || 'см. журнал на сервере'}`);
+    }
+  }, 3000);
+}
+
+$('syncBtn').addEventListener('click', async () => {
+  if (!window.confirm('Применить текущие связи к уже созданным сделкам в Битриксе? В сделках обновятся поля «Клиент», «Площадка» и «Плательщик». Компании, которые менеджер выбрал вручную в поле «Клиент», не затрагиваются.')) return;
+  $('syncBtn').disabled = true;
+  try {
+    await api('POST', '/api/client-links/sync');
+  } catch (error) {
+    toast(`Не запущено: ${error.message}`);
+  }
+  await refreshSync();
+  if (sync.status && sync.status.running) watchSync();
+});
+
 $('search').addEventListener('input', (e) => { state.search = e.target.value; renderList(); });
 $('statusFilter').addEventListener('change', (e) => { state.status = e.target.value; renderList(); });
 $('roleFilter').addEventListener('change', (e) => { state.role = e.target.value; renderList(); });
@@ -389,3 +475,4 @@ $('helpModal').addEventListener('click', (e) => { if (e.target === $('helpModal'
 load(false).catch((error) => {
   $('summary').textContent = `Ошибка загрузки: ${error.message}`;
 });
+refreshSync();

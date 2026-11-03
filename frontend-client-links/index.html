@@ -4,15 +4,17 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Клиенты HireTrack ↔ Заказчики Битрикса</title>
-  <link rel="stylesheet" href="styles.css?v=1">
+  <link rel="stylesheet" href="styles.css?v=2">
 </head>
 <body>
   <header class="top">
     <div>
       <h1>Клиенты HireTrack ↔ Заказчики Битрикса</h1>
       <p id="summary" class="top-sub">Загрузка…</p>
+      <p id="syncInfo" class="top-sub sync-info"></p>
     </div>
     <div class="top-actions">
+      <button id="syncBtn" type="button" class="sync" title="Применить связи к уже созданным сделкам в Битриксе">Синхронизировать со сделками</button>
       <button id="helpBtn" type="button" class="ghost">Справка</button>
       <button id="refreshBtn" type="button" class="ghost">Обновить данные</button>
     </div>
@@ -47,6 +49,6 @@
       <div id="helpBody" class="modal-body"></div>
     </div>
   </div>
-  <script src="app.js?v=2"></script>
+  <script src="app.js?v=3"></script>
 </body>
 </html>

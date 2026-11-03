@@ -2,10 +2,13 @@ import { Request, Response, Router } from 'express';
 import { z } from 'zod';
 import { getLinkableCompanies } from '../services/hiretrack-crew-read';
 import { getAllLinks, getBitrixCompanies, saveLink } from '../services/client-links';
+import { getSyncStatus, startSync } from '../services/client-links-sync';
 
 // Sandbox for matching HireTrack companies with the Bitrix24 "Заказчики"
 // (1C-synced companies). Everything here reads HireTrack/Bitrix and writes
-// only the local staging file - see services/client-links.ts.
+// only the local staging file - see services/client-links.ts. The one
+// exception is POST /sync, which hands over to the connector's resync script
+// and so writes company fields on existing Bitrix deals.
 
 export const clientLinksRouter = Router();
 
@@ -44,6 +47,22 @@ clientLinksRouter.get('/state', async (req: Request, res: Response) => {
     });
   } catch (error) {
     res.status(502).json({ error: message(error) });
+  }
+});
+
+// Manual push of the mapping into the existing Bitrix deals (the same pass the
+// daily scheduled task runs). Long-running, so POST starts it and the page
+// polls GET /sync/status.
+clientLinksRouter.get('/sync/status', (_req: Request, res: Response) => {
+  res.json(getSyncStatus());
+});
+
+clientLinksRouter.post('/sync', (_req: Request, res: Response) => {
+  try {
+    const { started, status } = startSync();
+    res.status(started ? 202 : 200).json({ started, status });
+  } catch (error) {
+    res.status(500).json({ error: message(error) });
   }
 });
 
